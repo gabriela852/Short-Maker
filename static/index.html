@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Shorts Maker</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --navy: #0f1b33;
+    --gold: #c9a24b;
+    --bg: #f6f5f2;
+    --card: #ffffff;
+    --text: #1c1c1c;
+    --muted: #6b6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 32px 16px 80px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { color: var(--navy); font-size: 28px; margin-bottom: 4px; }
+  .sub { color: var(--muted); margin-top: 0; margin-bottom: 24px; }
+  .card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 14px; }
+  input[type=text], input[type=password] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  button {
+    background: var(--navy);
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 10px;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: var(--gold); color: var(--navy); }
+  .row { display: flex; gap: 10px; align-items: flex-end; }
+  .row input { flex: 1; }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .status { font-size: 14px; color: var(--navy); margin-top: 10px; }
+  .candidate {
+    border: 1px solid #eee;
+    border-radius: 10px;
+    padding: 14px;
+    margin-top: 12px;
+  }
+  .candidate h3 { margin: 0 0 6px; font-size: 16px; color: var(--navy); }
+  .candidate .time { font-size: 13px; color: var(--gold); font-weight: 600; }
+  .candidate p { font-size: 14px; color: var(--muted); margin: 8px 0; }
+  #settingsBox.saved { display: none; }
+  #settingsSaved { display: none; font-size: 13px; color: var(--muted); }
+  #settingsSaved.show { display: block; }
+  video { width: 100%; max-width: 300px; border-radius: 10px; display: block; margin: 12px 0; }
+  a.download { display: inline-block; margin-top: 6px; }
+  .error { color: #b00020; font-size: 14px; margin-top: 10px; }
+  .spinner {
+    border: 3px solid #eee;
+    border-top: 3px solid var(--navy);
+    border-radius: 50%;
+    width: 18px; height: 18px;
+    display: inline-block;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Shorts Maker</h1>
+  <p class="sub">Paste a link to one of your own YouTube videos. It finds the most engaging moment and turns it into a vertical, captioned short.</p>
+
+  <div class="card" id="settingsBox">
+    <label for="apiKey">Anthropic API key (used to find the best moment)</label>
+    <div class="row">
+      <input type="password" id="apiKey" placeholder="sk-ant-...">
+      <button onclick="saveKey()">Save</button>
+    </div>
+    <p class="hint">One-time setup. Your key is saved only on this computer, in this folder's .env file.</p>
+  </div>
+  <p id="settingsSaved">API key saved. <a href="#" onclick="showSettings(); return false;">Change it</a></p>
+
+  <div class="card">
+    <label for="url">YouTube link</label>
+    <div class="row">
+      <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=...">
+      <button id="analyzeBtn" onclick="analyze()">Find the best moment</button>
+    </div>
+    <div id="analyzeStatus"></div>
+  </div>
+
+  <div id="results"></div>
+</div>
+
+<script>
+let currentVideoId = null;
+
+async function refreshSettingsState() {
+  const res = await fetch('/api/settings');
+  const data = await res.json();
+  if (data.has_key) {
+    document.getElementById('settingsBox').classList.add('saved');
+    document.getElementById('settingsSaved').classList.add('show');
+  } else {
+    document.getElementById('settingsBox').classList.remove('saved');
+    document.getElementById('settingsSaved').classList.remove('show');
+  }
+}
+
+function showSettings() {
+  document.getElementById('settingsBox').classList.remove('saved');
+  document.getElementById('settingsSaved').classList.remove('show');
+}
+
+async function saveKey() {
+  const key = document.getElementById('apiKey').value.trim();
+  const res = await fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({api_key: key})
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  document.getElementById('apiKey').value = '';
+  refreshSettingsState();
+}
+
+function formatTime(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return m + ':' + String(sec).padStart(2, '0');
+}
+
+async function analyze() {
+  const url = document.getElementById('url').value.trim();
+  const statusEl = document.getElementById('analyzeStatus');
+  const btn = document.getElementById('analyzeBtn');
+  document.getElementById('results').innerHTML = '';
+  if (!url) { statusEl.innerHTML = '<p class="error">Paste a YouTube link first.</p>'; return; }
+
+  btn.disabled = true;
+  statusEl.innerHTML = '<p class="status"><span class="spinner"></span>Downloading and reading the video - this can take a minute or two...</p>';
+
+  try {
+    const res = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url})
+    });
+    const data = await res.json();
+    if (data.error) {
+      statusEl.innerHTML = '<p class="error">' + data.error + '</p>';
+      return;
+    }
+    statusEl.innerHTML = '<p class="status">Found ' + data.candidates.length + ' candidate moments in "' + data.title + '".</p>';
+    currentVideoId = data.video_id;
+    renderCandidates(data.candidates);
+  } catch (e) {
+    statusEl.innerHTML = '<p class="error">Something went wrong: ' + e + '</p>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderCandidates(candidates) {
+  const container = document.getElementById('results');
+  container.innerHTML = '';
+  candidates.forEach((c, i) => {
+    const div = document.createElement('div');
+    div.className = 'card candidate';
+    div.innerHTML = `
+      <div class="time">${formatTime(c.start_seconds)} - ${formatTime(c.end_seconds)}</div>
+      <h3>${c.title}</h3>
+      <p>${c.reason}</p>
+      <button onclick="generate(${i}, ${c.start_seconds}, ${c.end_seconds})">Make this short</button>
+      <div id="genStatus-${i}"></div>
+    `;
+    container.appendChild(div);
+  });
+}
+
+async function generate(i, start, end) {
+  const statusEl = document.getElementById('genStatus-' + i);
+  statusEl.innerHTML = '<p class="status"><span class="spinner"></span>Cutting, reframing to vertical, and adding captions...</p>';
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({video_id: currentVideoId, start, end})
+    });
+    const data = await res.json();
+    if (data.error) {
+      statusEl.innerHTML = '<p class="error">' + data.error + '</p>';
+      return;
+    }
+    statusEl.innerHTML = `
+      <video controls src="${data.url}"></video>
+      <a class="download" href="${data.url}" download="${data.filename}"><button class="secondary">Download</button></a>
+    `;
+  } catch (e) {
+    statusEl.innerHTML = '<p class="error">Something went wrong: ' + e + '</p>';
+  }
+}
+
+refreshSettingsState();
+</script>
+</body>
+</html>
