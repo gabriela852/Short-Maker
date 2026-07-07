@@ -72,6 +72,20 @@
   video { width: 100%; max-width: 300px; border-radius: 10px; display: block; margin: 12px 0; }
   a.download { display: inline-block; margin-top: 6px; }
   .error { color: #b00020; font-size: 14px; margin-top: 10px; }
+  .preview-wrap { max-width: 220px; margin-top: 10px; }
+  .preview-wrap img {
+    width: 100%;
+    border-radius: 10px;
+    display: block;
+    background: #eee;
+    aspect-ratio: 9 / 16;
+    object-fit: cover;
+    transition: opacity 0.15s;
+  }
+  .adjust { margin-top: 12px; max-width: 260px; }
+  .adjust label { font-weight: 600; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  .adjust .slider-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+  .adjust input[type=range] { width: 100%; margin: 2px 0 10px; }
   .spinner {
     border: 3px solid #eee;
     border-top: 3px solid var(--navy);
@@ -114,6 +128,8 @@
 
 <script>
 let currentVideoId = null;
+let candidateAdjust = {};
+let debounceTimers = {};
 
 async function refreshSettingsState() {
   const res = await fetch('/api/settings');
@@ -185,28 +201,79 @@ async function analyze() {
 function renderCandidates(candidates) {
   const container = document.getElementById('results');
   container.innerHTML = '';
+  candidateAdjust = {};
   candidates.forEach((c, i) => {
+    candidateAdjust[i] = {crop_x_pct: 0.5, caption_margin_v: 90};
+
     const div = document.createElement('div');
     div.className = 'card candidate';
     div.innerHTML = `
       <div class="time">${formatTime(c.start_seconds)} - ${formatTime(c.end_seconds)}</div>
       <h3>${c.title}</h3>
       <p>${c.reason}</p>
+      <div class="preview-wrap"><img id="previewImg-${i}" alt="preview"></div>
+      <div class="adjust">
+        <label>Move left / right</label>
+        <div class="slider-labels"><span>Left</span><span>Right</span></div>
+        <input type="range" id="cropX-${i}" min="0" max="100" value="50"
+          oninput="onSliderChange(${i}, ${c.start_seconds}, ${c.end_seconds})">
+        <label>Caption height</label>
+        <div class="slider-labels"><span>Lower</span><span>Higher</span></div>
+        <input type="range" id="capY-${i}" min="40" max="300" value="90"
+          oninput="onSliderChange(${i}, ${c.start_seconds}, ${c.end_seconds})">
+      </div>
       <button onclick="generate(${i}, ${c.start_seconds}, ${c.end_seconds})">Make this short</button>
       <div id="genStatus-${i}"></div>
     `;
     container.appendChild(div);
+    updatePreview(i, c.start_seconds, c.end_seconds);
   });
+}
+
+function onSliderChange(i, start, end) {
+  const cropX = document.getElementById('cropX-' + i).value / 100;
+  const capY = document.getElementById('capY-' + i).value;
+  candidateAdjust[i] = {crop_x_pct: cropX, caption_margin_v: capY};
+
+  clearTimeout(debounceTimers[i]);
+  debounceTimers[i] = setTimeout(() => updatePreview(i, start, end), 300);
+}
+
+async function updatePreview(i, start, end) {
+  const img = document.getElementById('previewImg-' + i);
+  const adjust = candidateAdjust[i];
+  img.style.opacity = '0.5';
+  try {
+    const res = await fetch('/api/preview', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        video_id: currentVideoId, start, end,
+        crop_x_pct: adjust.crop_x_pct, caption_margin_v: adjust.caption_margin_v
+      })
+    });
+    const data = await res.json();
+    if (data.url) {
+      img.src = data.url + '?t=' + Date.now();
+      img.style.opacity = '1';
+    }
+  } catch (e) {
+    img.style.opacity = '1';
+  }
 }
 
 async function generate(i, start, end) {
   const statusEl = document.getElementById('genStatus-' + i);
+  const adjust = candidateAdjust[i];
   statusEl.innerHTML = '<p class="status"><span class="spinner"></span>Cutting, reframing to vertical, and adding captions...</p>';
   try {
     const res = await fetch('/api/generate', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({video_id: currentVideoId, start, end})
+      body: JSON.stringify({
+        video_id: currentVideoId, start, end,
+        crop_x_pct: adjust.crop_x_pct, caption_margin_v: adjust.caption_margin_v
+      })
     });
     const data = await res.json();
     if (data.error) {
