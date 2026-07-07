@@ -19,11 +19,36 @@
     background: var(--bg);
     color: var(--text);
     margin: 0;
-    padding: 32px 16px 80px;
   }
-  .wrap { max-width: 720px; margin: 0 auto; }
-  h1 { color: var(--navy); font-size: 28px; margin-bottom: 4px; }
+  .app-layout { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 190px;
+    flex-shrink: 0;
+    background: var(--navy);
+    padding: 24px 14px;
+  }
+  .sidebar-title { color: white; font-size: 18px; font-weight: 700; margin: 0 0 20px 6px; }
+  .nav-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    color: #cfd6e4;
+    border: none;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-bottom: 6px;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.08); }
+  .nav-item.active { background: var(--gold); color: var(--navy); }
+  .content { flex: 1; padding: 32px 24px 80px; }
+  .content-inner { max-width: 680px; }
+  h1 { color: var(--navy); font-size: 26px; margin: 0 0 4px; }
   .sub { color: var(--muted); margin-top: 0; margin-bottom: 24px; }
+  h2.section-heading { font-size: 16px; color: var(--navy); margin: 28px 0 6px; }
   .card {
     background: var(--card);
     border-radius: 12px;
@@ -57,6 +82,7 @@
   .row input { flex: 1; }
   .hint { font-size: 13px; color: var(--muted); margin-top: 6px; }
   .status { font-size: 14px; color: var(--navy); margin-top: 10px; }
+  .video-title { font-size: 13px; color: var(--muted); margin: 0 0 4px; font-weight: 600; }
   .candidate {
     border: 1px solid #eee;
     border-radius: 10px;
@@ -66,16 +92,13 @@
   .candidate h3 { margin: 0 0 6px; font-size: 16px; color: var(--navy); }
   .candidate .time { font-size: 13px; color: var(--gold); font-weight: 600; }
   .candidate p { font-size: 14px; color: var(--muted); margin: 8px 0; }
-  h2.section-heading { font-size: 16px; color: var(--navy); margin: 28px 0 6px; }
-  .video-title { font-size: 13px; color: var(--muted); margin: 0 0 4px; font-weight: 600; }
-  .preview-hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
-  .generated-card .meta { font-size: 13px; color: var(--muted); margin: 2px 0; }
   #settingsBox.saved { display: none; }
   #settingsSaved { display: none; font-size: 13px; color: var(--muted); }
   #settingsSaved.show { display: block; }
   video { width: 100%; max-width: 300px; border-radius: 10px; display: block; margin: 12px 0; }
   a.download { display: inline-block; margin-top: 6px; }
   .error { color: #b00020; font-size: 14px; margin-top: 10px; }
+  .empty-hint { color: var(--muted); font-size: 14px; }
   .preview-wrap { max-width: 220px; margin-top: 10px; }
   .preview-wrap img {
     width: 100%;
@@ -90,6 +113,7 @@
   .adjust label { font-weight: 600; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
   .adjust .slider-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
   .adjust input[type=range] { width: 100%; margin: 2px 0 10px; }
+  .generated-card .meta { font-size: 13px; color: var(--muted); margin: 2px 0; }
   .spinner {
     border: 3px solid #eee;
     border-top: 3px solid var(--navy);
@@ -104,40 +128,68 @@
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>Shorts Maker</h1>
-  <p class="sub">Paste a link to one of your own YouTube videos. It finds the most engaging moment and turns it into a vertical, captioned short.</p>
+<div class="app-layout">
+  <nav class="sidebar">
+    <p class="sidebar-title">Shorts Maker</p>
+    <button class="nav-item active" id="navCreate" onclick="showTab('create')">Create</button>
+    <button class="nav-item" id="navHistory" onclick="showTab('history')">History</button>
+  </nav>
 
-  <div class="card" id="settingsBox">
-    <label for="apiKey">Anthropic API key (used to find the best moment)</label>
-    <div class="row">
-      <input type="password" id="apiKey" placeholder="sk-ant-...">
-      <button onclick="saveKey()">Save</button>
+  <main class="content">
+    <div class="content-inner">
+
+      <div id="createView">
+        <h1>Shorts Maker</h1>
+        <p class="sub">Paste a link to one of your own YouTube videos. It finds the most engaging moment and turns it into a vertical, captioned short.</p>
+
+        <div class="card" id="settingsBox">
+          <label for="apiKey">Anthropic API key (used to find the best moment)</label>
+          <div class="row">
+            <input type="password" id="apiKey" placeholder="sk-ant-...">
+            <button onclick="saveKey()">Save</button>
+          </div>
+          <p class="hint">One-time setup. Your key is saved only on this computer, in this folder's .env file.</p>
+        </div>
+        <p id="settingsSaved">API key saved. <a href="#" onclick="showSettings(); return false;">Change it</a></p>
+
+        <div class="card">
+          <label for="url">YouTube link</label>
+          <div class="row">
+            <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=...">
+            <button id="analyzeBtn" onclick="analyze()">Find the best moment</button>
+          </div>
+          <div id="analyzeStatus"></div>
+        </div>
+
+        <div id="freshResults"></div>
+      </div>
+
+      <div id="historyView" style="display:none">
+        <h1>History</h1>
+        <p class="sub">Everything you've analyzed and every short you've made, saved on this computer.</p>
+
+        <h2 class="section-heading">Videos you've analyzed</h2>
+        <div id="analyzedList"></div>
+
+        <h2 class="section-heading">Shorts you've made</h2>
+        <div id="generatedList"></div>
+      </div>
+
     </div>
-    <p class="hint">One-time setup. Your key is saved only on this computer, in this folder's .env file.</p>
-  </div>
-  <p id="settingsSaved">API key saved. <a href="#" onclick="showSettings(); return false;">Change it</a></p>
-
-  <div class="card">
-    <label for="url">YouTube link</label>
-    <div class="row">
-      <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=...">
-      <button id="analyzeBtn" onclick="analyze()">Find the best moment</button>
-    </div>
-    <div id="analyzeStatus"></div>
-  </div>
-
-  <h2 class="section-heading" id="analyzedHeading" style="display:none">Videos you've analyzed</h2>
-  <div id="analyzedList"></div>
-
-  <h2 class="section-heading" id="generatedHeading" style="display:none">Shorts you've made</h2>
-  <div id="generatedList"></div>
+  </main>
 </div>
 
 <script>
-let state = {};  // state[`${video_id}-${i}`] = {video_id, video_title, candidate_title, reason, start, end, crop_x_pct, caption_margin_v}
+let state = {};  // state[domKey] = {video_id, video_title, candidate_title, reason, start, end, crop_x_pct, caption_margin_v}
 let debounceTimers = {};
-let justAnalyzedVideoId = null;
+
+function showTab(tab) {
+  document.getElementById('createView').style.display = tab === 'create' ? '' : 'none';
+  document.getElementById('historyView').style.display = tab === 'history' ? '' : 'none';
+  document.getElementById('navCreate').classList.toggle('active', tab === 'create');
+  document.getElementById('navHistory').classList.toggle('active', tab === 'history');
+  if (tab === 'history') loadHistory();
+}
 
 async function refreshSettingsState() {
   const res = await fetch('/api/settings');
@@ -183,6 +235,7 @@ async function analyze() {
 
   btn.disabled = true;
   statusEl.innerHTML = '<p class="status"><span class="spinner"></span>Downloading and reading the video - this can take a minute or two...</p>';
+  document.getElementById('freshResults').innerHTML = '';
 
   try {
     const res = await fetch('/api/analyze', {
@@ -196,9 +249,13 @@ async function analyze() {
       return;
     }
     statusEl.innerHTML = '<p class="status">Found ' + data.candidates.length + ' candidate moments in "' + data.title + '".</p>';
-    justAnalyzedVideoId = data.video_id;
     document.getElementById('url').value = '';
-    await loadHistory();
+
+    const container = document.getElementById('freshResults');
+    data.candidates.forEach((c, i) => {
+      const domKey = `create-${data.video_id}-${i}`;
+      renderCandidateCard(domKey, data.video_id, c, container, true);
+    });
   } catch (e) {
     statusEl.innerHTML = '<p class="error">Something went wrong: ' + e + '</p>';
   } finally {
@@ -210,16 +267,19 @@ async function loadHistory() {
   const res = await fetch('/api/history');
   const data = await res.json();
 
-  state = {};
   const analyzedList = document.getElementById('analyzedList');
   const generatedList = document.getElementById('generatedList');
   analyzedList.innerHTML = '';
   generatedList.innerHTML = '';
 
-  document.getElementById('analyzedHeading').style.display = data.analyses.length ? '' : 'none';
-  document.getElementById('generatedHeading').style.display = data.generated.length ? '' : 'none';
-
+  if (!data.analyses.length) {
+    analyzedList.innerHTML = '<p class="empty-hint">Nothing analyzed yet.</p>';
+  }
   data.analyses.forEach(entry => renderAnalysisEntry(entry, analyzedList));
+
+  if (!data.generated.length) {
+    generatedList.innerHTML = '<p class="empty-hint">No shorts made yet.</p>';
+  }
   data.generated.forEach(g => renderGeneratedEntry(g, generatedList));
 }
 
@@ -230,44 +290,44 @@ function renderAnalysisEntry(entry, container) {
   heading.className = 'video-title';
   heading.textContent = entry.title;
   wrap.appendChild(heading);
-
-  const eager = entry.video_id === justAnalyzedVideoId;
+  container.appendChild(wrap);  // attach before populating so getElementById can find children below
 
   entry.candidates.forEach((c, i) => {
-    const key = `${entry.video_id}-${i}`;
-    state[key] = {
-      video_id: entry.video_id, video_title: entry.title,
-      candidate_title: c.title, reason: c.reason,
-      start: c.start_seconds, end: c.end_seconds,
-      crop_x_pct: 0.5, caption_margin_v: 90,
-    };
-
-    const div = document.createElement('div');
-    div.className = 'candidate';
-    div.innerHTML = `
-      <div class="time">${formatTime(c.start_seconds)} - ${formatTime(c.end_seconds)}</div>
-      <h3></h3>
-      <p></p>
-      <div class="preview-wrap"><img id="previewImg-${key}" alt="preview"></div>
-      <p class="preview-hint" id="previewHint-${key}">${eager ? '' : 'Move a slider to load the preview'}</p>
-      <div class="adjust">
-        <label>Move left / right</label>
-        <div class="slider-labels"><span>Left</span><span>Right</span></div>
-        <input type="range" id="cropX-${key}" min="0" max="100" value="50" oninput="onSliderChange('${key}')">
-        <label>Caption height</label>
-        <div class="slider-labels"><span>Lower</span><span>Higher</span></div>
-        <input type="range" id="capY-${key}" min="40" max="300" value="90" oninput="onSliderChange('${key}')">
-      </div>
-      <button onclick="generate('${key}')">Make this short</button>
-      <div id="genStatus-${key}"></div>
-    `;
-    div.querySelector('h3').textContent = c.title;
-    div.querySelector('p').textContent = c.reason;
-    wrap.appendChild(div);
-    if (eager) updatePreview(key);
+    const domKey = `history-${entry.video_id}-${i}`;
+    renderCandidateCard(domKey, entry.video_id, c, wrap, true);
   });
+}
 
-  container.appendChild(wrap);
+function renderCandidateCard(domKey, videoId, c, container, eager) {
+  state[domKey] = {
+    video_id: videoId,
+    candidate_title: c.title, reason: c.reason,
+    start: c.start_seconds, end: c.end_seconds,
+    crop_x_pct: 0.5, caption_margin_v: 90,
+  };
+
+  const div = document.createElement('div');
+  div.className = 'candidate';
+  div.innerHTML = `
+    <div class="time">${formatTime(c.start_seconds)} - ${formatTime(c.end_seconds)}</div>
+    <h3></h3>
+    <p></p>
+    <div class="preview-wrap"><img id="previewImg-${domKey}" alt="preview"></div>
+    <div class="adjust">
+      <label>Move left / right</label>
+      <div class="slider-labels"><span>Left</span><span>Right</span></div>
+      <input type="range" id="cropX-${domKey}" min="0" max="100" value="50" oninput="onSliderChange('${domKey}')">
+      <label>Caption height</label>
+      <div class="slider-labels"><span>Lower</span><span>Higher</span></div>
+      <input type="range" id="capY-${domKey}" min="40" max="300" value="90" oninput="onSliderChange('${domKey}')">
+    </div>
+    <button onclick="generate('${domKey}')">Make this short</button>
+    <div id="genStatus-${domKey}"></div>
+  `;
+  div.querySelector('h3').textContent = c.title;
+  div.querySelector('p').textContent = c.reason;
+  container.appendChild(div);
+  if (eager) updatePreview(domKey);
 }
 
 function renderGeneratedEntry(g, container) {
@@ -301,19 +361,20 @@ function renderGeneratedEntry(g, container) {
   container.appendChild(div);
 }
 
-function onSliderChange(key) {
-  const cropX = document.getElementById('cropX-' + key).value / 100;
-  const capY = document.getElementById('capY-' + key).value;
-  state[key].crop_x_pct = cropX;
-  state[key].caption_margin_v = capY;
+function onSliderChange(domKey) {
+  const cropX = document.getElementById('cropX-' + domKey).value / 100;
+  const capY = document.getElementById('capY-' + domKey).value;
+  state[domKey].crop_x_pct = cropX;
+  state[domKey].caption_margin_v = capY;
 
-  clearTimeout(debounceTimers[key]);
-  debounceTimers[key] = setTimeout(() => updatePreview(key), 300);
+  clearTimeout(debounceTimers[domKey]);
+  debounceTimers[domKey] = setTimeout(() => updatePreview(domKey), 300);
 }
 
-async function updatePreview(key) {
-  const img = document.getElementById('previewImg-' + key);
-  const s = state[key];
+async function updatePreview(domKey) {
+  const img = document.getElementById('previewImg-' + domKey);
+  const s = state[domKey];
+  if (!img || !s) return;
   img.style.opacity = '0.5';
   try {
     const res = await fetch('/api/preview', {
@@ -328,8 +389,6 @@ async function updatePreview(key) {
     if (data.url) {
       img.src = data.url + '?t=' + Date.now();
       img.style.opacity = '1';
-      const hint = document.getElementById('previewHint-' + key);
-      if (hint) hint.textContent = '';
     } else if (data.error) {
       img.style.opacity = '1';
     }
@@ -338,9 +397,9 @@ async function updatePreview(key) {
   }
 }
 
-async function generate(key) {
-  const statusEl = document.getElementById('genStatus-' + key);
-  const s = state[key];
+async function generate(domKey) {
+  const statusEl = document.getElementById('genStatus-' + domKey);
+  const s = state[domKey];
   statusEl.innerHTML = '<p class="status"><span class="spinner"></span>Cutting, reframing to vertical, and adding captions...</p>';
   try {
     const res = await fetch('/api/generate', {
@@ -357,15 +416,17 @@ async function generate(key) {
       statusEl.innerHTML = '<p class="error">' + data.error + '</p>';
       return;
     }
-    statusEl.innerHTML = '<p class="status">Done - see it under "Shorts you\'ve made" below.</p>';
-    await loadHistory();
+    statusEl.innerHTML = `
+      <video controls src="${data.url}"></video>
+      <a class="download" href="${data.url}" download="${data.filename}"><button class="secondary">Download</button></a>
+      <p class="hint">Also saved under the History tab.</p>
+    `;
   } catch (e) {
     statusEl.innerHTML = '<p class="error">Something went wrong: ' + e + '</p>';
   }
 }
 
 refreshSettingsState();
-loadHistory();
 </script>
 </body>
 </html>
