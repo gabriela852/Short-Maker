@@ -66,6 +66,10 @@
   .candidate h3 { margin: 0 0 6px; font-size: 16px; color: var(--navy); }
   .candidate .time { font-size: 13px; color: var(--gold); font-weight: 600; }
   .candidate p { font-size: 14px; color: var(--muted); margin: 8px 0; }
+  h2.section-heading { font-size: 16px; color: var(--navy); margin: 28px 0 6px; }
+  .video-title { font-size: 13px; color: var(--muted); margin: 0 0 4px; font-weight: 600; }
+  .preview-hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  .generated-card .meta { font-size: 13px; color: var(--muted); margin: 2px 0; }
   #settingsBox.saved { display: none; }
   #settingsSaved { display: none; font-size: 13px; color: var(--muted); }
   #settingsSaved.show { display: block; }
@@ -123,13 +127,17 @@
     <div id="analyzeStatus"></div>
   </div>
 
-  <div id="results"></div>
+  <h2 class="section-heading" id="analyzedHeading" style="display:none">Videos you've analyzed</h2>
+  <div id="analyzedList"></div>
+
+  <h2 class="section-heading" id="generatedHeading" style="display:none">Shorts you've made</h2>
+  <div id="generatedList"></div>
 </div>
 
 <script>
-let currentVideoId = null;
-let candidateAdjust = {};
+let state = {};  // state[`${video_id}-${i}`] = {video_id, video_title, candidate_title, reason, start, end, crop_x_pct, caption_margin_v}
 let debounceTimers = {};
+let justAnalyzedVideoId = null;
 
 async function refreshSettingsState() {
   const res = await fetch('/api/settings');
@@ -171,7 +179,6 @@ async function analyze() {
   const url = document.getElementById('url').value.trim();
   const statusEl = document.getElementById('analyzeStatus');
   const btn = document.getElementById('analyzeBtn');
-  document.getElementById('results').innerHTML = '';
   if (!url) { statusEl.innerHTML = '<p class="error">Paste a YouTube link first.</p>'; return; }
 
   btn.disabled = true;
@@ -189,8 +196,9 @@ async function analyze() {
       return;
     }
     statusEl.innerHTML = '<p class="status">Found ' + data.candidates.length + ' candidate moments in "' + data.title + '".</p>';
-    currentVideoId = data.video_id;
-    renderCandidates(data.candidates);
+    justAnalyzedVideoId = data.video_id;
+    document.getElementById('url').value = '';
+    await loadHistory();
   } catch (e) {
     statusEl.innerHTML = '<p class="error">Something went wrong: ' + e + '</p>';
   } finally {
@@ -198,63 +206,131 @@ async function analyze() {
   }
 }
 
-function renderCandidates(candidates) {
-  const container = document.getElementById('results');
-  container.innerHTML = '';
-  candidateAdjust = {};
-  candidates.forEach((c, i) => {
-    candidateAdjust[i] = {crop_x_pct: 0.5, caption_margin_v: 90};
+async function loadHistory() {
+  const res = await fetch('/api/history');
+  const data = await res.json();
+
+  state = {};
+  const analyzedList = document.getElementById('analyzedList');
+  const generatedList = document.getElementById('generatedList');
+  analyzedList.innerHTML = '';
+  generatedList.innerHTML = '';
+
+  document.getElementById('analyzedHeading').style.display = data.analyses.length ? '' : 'none';
+  document.getElementById('generatedHeading').style.display = data.generated.length ? '' : 'none';
+
+  data.analyses.forEach(entry => renderAnalysisEntry(entry, analyzedList));
+  data.generated.forEach(g => renderGeneratedEntry(g, generatedList));
+}
+
+function renderAnalysisEntry(entry, container) {
+  const wrap = document.createElement('div');
+  wrap.className = 'card';
+  const heading = document.createElement('p');
+  heading.className = 'video-title';
+  heading.textContent = entry.title;
+  wrap.appendChild(heading);
+
+  const eager = entry.video_id === justAnalyzedVideoId;
+
+  entry.candidates.forEach((c, i) => {
+    const key = `${entry.video_id}-${i}`;
+    state[key] = {
+      video_id: entry.video_id, video_title: entry.title,
+      candidate_title: c.title, reason: c.reason,
+      start: c.start_seconds, end: c.end_seconds,
+      crop_x_pct: 0.5, caption_margin_v: 90,
+    };
 
     const div = document.createElement('div');
-    div.className = 'card candidate';
+    div.className = 'candidate';
     div.innerHTML = `
       <div class="time">${formatTime(c.start_seconds)} - ${formatTime(c.end_seconds)}</div>
-      <h3>${c.title}</h3>
-      <p>${c.reason}</p>
-      <div class="preview-wrap"><img id="previewImg-${i}" alt="preview"></div>
+      <h3></h3>
+      <p></p>
+      <div class="preview-wrap"><img id="previewImg-${key}" alt="preview"></div>
+      <p class="preview-hint" id="previewHint-${key}">${eager ? '' : 'Move a slider to load the preview'}</p>
       <div class="adjust">
         <label>Move left / right</label>
         <div class="slider-labels"><span>Left</span><span>Right</span></div>
-        <input type="range" id="cropX-${i}" min="0" max="100" value="50"
-          oninput="onSliderChange(${i}, ${c.start_seconds}, ${c.end_seconds})">
+        <input type="range" id="cropX-${key}" min="0" max="100" value="50" oninput="onSliderChange('${key}')">
         <label>Caption height</label>
         <div class="slider-labels"><span>Lower</span><span>Higher</span></div>
-        <input type="range" id="capY-${i}" min="40" max="300" value="90"
-          oninput="onSliderChange(${i}, ${c.start_seconds}, ${c.end_seconds})">
+        <input type="range" id="capY-${key}" min="40" max="300" value="90" oninput="onSliderChange('${key}')">
       </div>
-      <button onclick="generate(${i}, ${c.start_seconds}, ${c.end_seconds})">Make this short</button>
-      <div id="genStatus-${i}"></div>
+      <button onclick="generate('${key}')">Make this short</button>
+      <div id="genStatus-${key}"></div>
     `;
-    container.appendChild(div);
-    updatePreview(i, c.start_seconds, c.end_seconds);
+    div.querySelector('h3').textContent = c.title;
+    div.querySelector('p').textContent = c.reason;
+    wrap.appendChild(div);
+    if (eager) updatePreview(key);
   });
+
+  container.appendChild(wrap);
 }
 
-function onSliderChange(i, start, end) {
-  const cropX = document.getElementById('cropX-' + i).value / 100;
-  const capY = document.getElementById('capY-' + i).value;
-  candidateAdjust[i] = {crop_x_pct: cropX, caption_margin_v: capY};
+function renderGeneratedEntry(g, container) {
+  const div = document.createElement('div');
+  div.className = 'card generated-card';
+  div.innerHTML = `
+    <h3></h3>
+    <p class="meta"></p>
+    <p class="meta"></p>
+  `;
+  const [titleEl, fromEl, whenEl] = div.querySelectorAll('h3, .meta');
+  titleEl.textContent = g.candidate_title || 'Short';
+  fromEl.textContent = `From "${g.source_title || g.video_id}" - ${formatTime(g.start)} to ${formatTime(g.end)}`;
+  whenEl.textContent = g.generated_at ? `Made ${new Date(g.generated_at).toLocaleString()}` : '';
 
-  clearTimeout(debounceTimers[i]);
-  debounceTimers[i] = setTimeout(() => updatePreview(i, start, end), 300);
+  const videoEl = document.createElement('video');
+  videoEl.controls = true;
+  videoEl.src = g.url;
+  div.appendChild(videoEl);
+
+  const link = document.createElement('a');
+  link.className = 'download';
+  link.href = g.url;
+  link.download = g.filename;
+  const dlBtn = document.createElement('button');
+  dlBtn.className = 'secondary';
+  dlBtn.textContent = 'Download';
+  link.appendChild(dlBtn);
+  div.appendChild(link);
+
+  container.appendChild(div);
 }
 
-async function updatePreview(i, start, end) {
-  const img = document.getElementById('previewImg-' + i);
-  const adjust = candidateAdjust[i];
+function onSliderChange(key) {
+  const cropX = document.getElementById('cropX-' + key).value / 100;
+  const capY = document.getElementById('capY-' + key).value;
+  state[key].crop_x_pct = cropX;
+  state[key].caption_margin_v = capY;
+
+  clearTimeout(debounceTimers[key]);
+  debounceTimers[key] = setTimeout(() => updatePreview(key), 300);
+}
+
+async function updatePreview(key) {
+  const img = document.getElementById('previewImg-' + key);
+  const s = state[key];
   img.style.opacity = '0.5';
   try {
     const res = await fetch('/api/preview', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        video_id: currentVideoId, start, end,
-        crop_x_pct: adjust.crop_x_pct, caption_margin_v: adjust.caption_margin_v
+        video_id: s.video_id, start: s.start, end: s.end,
+        crop_x_pct: s.crop_x_pct, caption_margin_v: s.caption_margin_v
       })
     });
     const data = await res.json();
     if (data.url) {
       img.src = data.url + '?t=' + Date.now();
+      img.style.opacity = '1';
+      const hint = document.getElementById('previewHint-' + key);
+      if (hint) hint.textContent = '';
+    } else if (data.error) {
       img.style.opacity = '1';
     }
   } catch (e) {
@@ -262,17 +338,18 @@ async function updatePreview(i, start, end) {
   }
 }
 
-async function generate(i, start, end) {
-  const statusEl = document.getElementById('genStatus-' + i);
-  const adjust = candidateAdjust[i];
+async function generate(key) {
+  const statusEl = document.getElementById('genStatus-' + key);
+  const s = state[key];
   statusEl.innerHTML = '<p class="status"><span class="spinner"></span>Cutting, reframing to vertical, and adding captions...</p>';
   try {
     const res = await fetch('/api/generate', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        video_id: currentVideoId, start, end,
-        crop_x_pct: adjust.crop_x_pct, caption_margin_v: adjust.caption_margin_v
+        video_id: s.video_id, start: s.start, end: s.end,
+        crop_x_pct: s.crop_x_pct, caption_margin_v: s.caption_margin_v,
+        candidate_title: s.candidate_title, reason: s.reason
       })
     });
     const data = await res.json();
@@ -280,16 +357,15 @@ async function generate(i, start, end) {
       statusEl.innerHTML = '<p class="error">' + data.error + '</p>';
       return;
     }
-    statusEl.innerHTML = `
-      <video controls src="${data.url}"></video>
-      <a class="download" href="${data.url}" download="${data.filename}"><button class="secondary">Download</button></a>
-    `;
+    statusEl.innerHTML = '<p class="status">Done - see it under "Shorts you\'ve made" below.</p>';
+    await loadHistory();
   } catch (e) {
     statusEl.innerHTML = '<p class="error">Something went wrong: ' + e + '</p>';
   }
 }
 
 refreshSettingsState();
+loadHistory();
 </script>
 </body>
 </html>

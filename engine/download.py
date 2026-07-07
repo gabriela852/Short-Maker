@@ -14,6 +14,43 @@ def _safe_id(url_or_id):
     return re.sub(r"[^a-zA-Z0-9_-]", "_", url_or_id)[:64]
 
 
+def _resolve_local_files(video_id):
+    """Finds the already-downloaded video file and its caption file for a
+    video_id, purely by looking at what's on disk in DOWNLOAD_DIR. Returns
+    (video_path, caption_path) - either may be None if missing. Uses sorted()
+    so caption selection is deterministic even when multiple lang variants
+    exist (e.g. "<id>.en.json3" and "<id>.en-orig.json3") - directory
+    enumeration order isn't guaranteed, especially on Windows/NTFS."""
+    video_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
+    if not os.path.isfile(video_path):
+        candidates = sorted(glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*")))
+        video_candidates = [c for c in candidates if not c.endswith(".json3")]
+        video_path = video_candidates[0] if video_candidates else None
+
+    caption_path = None
+    caption_candidates = sorted(glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*.json3")))
+    if caption_candidates:
+        caption_path = caption_candidates[0]
+
+    return video_path, caption_path
+
+
+def load_video(video_id):
+    """Reconstructs {video_path, words, video_id} purely from files already
+    on disk (no network) - used to bring a previously-analyzed video back
+    after a server restart or page refresh. Returns None if the video file
+    or every caption variant is missing."""
+    video_path, caption_path = _resolve_local_files(video_id)
+    if not video_path or not caption_path:
+        return None
+
+    words = _parse_json3_captions(caption_path)
+    if not words:
+        return None
+
+    return {"video_path": video_path, "words": words, "video_id": video_id}
+
+
 def fetch_video(url, progress_hook=None):
     """Downloads the video (<=1080p mp4) and its captions (auto or manual).
 
@@ -42,22 +79,11 @@ def fetch_video(url, progress_hook=None):
     video_id = info["id"]
     title = info.get("title", video_id)
 
-    video_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
-    if not os.path.isfile(video_path):
-        candidates = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*"))
-        video_candidates = [c for c in candidates if not c.endswith(".json3")]
-        if not video_candidates:
-            raise RuntimeError("Download finished but no video file was found.")
-        video_path = video_candidates[0]
+    video_path, caption_path = _resolve_local_files(video_id)
+    if not video_path:
+        raise RuntimeError("Download finished but no video file was found.")
 
-    caption_path = None
-    for path in glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*.json3")):
-        caption_path = path
-        break
-
-    words = []
-    if caption_path:
-        words = _parse_json3_captions(caption_path)
+    words = _parse_json3_captions(caption_path) if caption_path else []
 
     if not words:
         raise RuntimeError(

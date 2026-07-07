@@ -1,5 +1,9 @@
+import datetime
+import glob
+import json
 import os
 import traceback
+import uuid
 
 from dotenv import load_dotenv, set_key
 from flask import Flask, jsonify, request, send_from_directory
@@ -9,16 +13,69 @@ from engine import download, rank, clip
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 OUTPUT_DIR = os.path.join(BASE_DIR, "data", "outputs")
+ANALYSES_DIR = os.path.join(BASE_DIR, "data", "analyses")
 
 if not os.path.exists(ENV_PATH):
     open(ENV_PATH, "a").close()
 load_dotenv(ENV_PATH)
+os.makedirs(ANALYSES_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder="static", template_folder="static")
 
 # In-memory cache so /api/generate doesn't need to re-download/re-transcribe
-# after /api/analyze already did the work in this session.
+# after /api/analyze already did the work in this session. Lazily rebuilt
+# (see _get_video) from files already on disk if a video isn't cached yet -
+# e.g. after a server restart - rather than eagerly reloading everything
+# at startup.
 VIDEO_CACHE = {}
+
+
+def _analysis_path(video_id):
+    return os.path.join(ANALYSES_DIR, f"{video_id}.json")
+
+
+def _save_analysis(video_id, title, duration, candidates):
+    data = {
+        "video_id": video_id,
+        "title": title,
+        "duration": duration,
+        "candidates": candidates,
+        "analyzed_at": datetime.datetime.now().isoformat(),
+    }
+    path = _analysis_path(video_id)
+    tmp_path = path + f".{uuid.uuid4().hex[:8]}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.replace(tmp_path, path)
+
+
+def _load_analysis(video_id):
+    path = _analysis_path(video_id)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _get_video(video_id):
+    """Returns {video_path, words, video_id, title}, using the in-memory
+    cache if present, otherwise reconstructing it from files still on disk
+    (no network). Returns None if the video isn't cached and can't be
+    reconstructed (e.g. its source files were deleted)."""
+    if video_id in VIDEO_CACHE:
+        return VIDEO_CACHE[video_id]
+
+    video = download.load_video(video_id)
+    if video is None:
+        return None
+
+    analysis = _load_analysis(video_id)
+    video["title"] = analysis["title"] if analysis else video_id
+    VIDEO_CACHE[video_id] = video
+    return video
 
 
 @app.route("/")
@@ -64,6 +121,8 @@ def analyze():
     VIDEO_CACHE[video["video_id"]] = video
 
     duration = video["words"][-1]["end"] if video["words"] else 0
+    _save_analysis(video["video_id"], video["title"], duration, candidates)
+
     return jsonify(
         {
             "video_id": video["video_id"],
@@ -82,13 +141,15 @@ def generate():
     end = data.get("end")
     crop_x_pct = data.get("crop_x_pct", 0.5)
     caption_margin_v = data.get("caption_margin_v", 90)
+    candidate_title = data.get("candidate_title", "")
+    reason = data.get("reason", "")
 
-    if video_id not in VIDEO_CACHE:
+    video = _get_video(video_id)
+    if video is None:
         return jsonify({"error": "That video isn't loaded anymore - click Analyze again first."}), 400
     if start is None or end is None or end <= start:
         return jsonify({"error": "Invalid clip times."}), 400
 
-    video = VIDEO_CACHE[video_id]
     try:
         output_path = clip.make_short(
             video["video_path"],
@@ -103,6 +164,10 @@ def generate():
         return jsonify({"error": str(e)}), 500
 
     filename = os.path.basename(output_path)
+    _save_generated_sidecar(
+        filename, video_id, video.get("title", video_id), candidate_title, reason,
+        float(start), float(end), float(crop_x_pct), float(caption_margin_v),
+    )
     return jsonify({"filename": filename, "url": f"/api/file/{filename}"})
 
 
@@ -116,12 +181,12 @@ def preview():
     crop_x_pct = data.get("crop_x_pct", 0.5)
     caption_margin_v = data.get("caption_margin_v", 90)
 
-    if video_id not in VIDEO_CACHE:
+    video = _get_video(video_id)
+    if video is None:
         return jsonify({"error": "That video isn't loaded anymore - click Analyze again first."}), 400
     if start is None or end is None or end <= start:
         return jsonify({"error": "Invalid clip times."}), 400
 
-    video = VIDEO_CACHE[video_id]
     try:
         output_path = clip.make_preview_frame(
             video["video_path"],
@@ -138,6 +203,51 @@ def preview():
 
     filename = os.path.basename(output_path)
     return jsonify({"url": f"/api/preview_file/{filename}"})
+
+
+def _save_generated_sidecar(filename, video_id, source_title, candidate_title, reason, start, end, crop_x_pct, caption_margin_v):
+    data = {
+        "filename": filename,
+        "video_id": video_id,
+        "source_title": source_title,
+        "candidate_title": candidate_title,
+        "reason": reason,
+        "start": start,
+        "end": end,
+        "crop_x_pct": crop_x_pct,
+        "caption_margin_v": caption_margin_v,
+        "generated_at": datetime.datetime.now().isoformat(),
+    }
+    sidecar_path = os.path.join(OUTPUT_DIR, os.path.splitext(filename)[0] + ".json")
+    with open(sidecar_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+
+@app.route("/api/history")
+def history():
+    analyses = []
+    for path in glob.glob(os.path.join(ANALYSES_DIR, "*.json")):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                analyses.append(json.load(f))
+        except (OSError, json.JSONDecodeError):
+            continue
+    analyses.sort(key=lambda a: a.get("analyzed_at", ""), reverse=True)
+
+    generated = []
+    for path in glob.glob(os.path.join(OUTPUT_DIR, "*.json")):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                entry = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not os.path.isfile(os.path.join(OUTPUT_DIR, entry.get("filename", ""))):
+            continue
+        entry["url"] = f"/api/file/{entry['filename']}"
+        generated.append(entry)
+    generated.sort(key=lambda g: g.get("generated_at", ""), reverse=True)
+
+    return jsonify({"analyses": analyses, "generated": generated})
 
 
 @app.route("/api/file/<path:filename>")
