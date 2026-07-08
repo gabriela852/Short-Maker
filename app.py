@@ -8,7 +8,7 @@ import uuid
 from dotenv import load_dotenv, set_key
 from flask import Flask, jsonify, request, send_from_directory
 
-from engine import download, rank, clip
+from engine import download, rank, clip, framing
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
@@ -28,6 +28,18 @@ app = Flask(__name__, static_folder="static", template_folder="static")
 # e.g. after a server restart - rather than eagerly reloading everything
 # at startup.
 VIDEO_CACHE = {}
+
+# Face-detection results are a pure function of (video, start, end), so cache
+# them the same way - avoids re-running OpenCV every time a preview debounces
+# or the user clicks between preview and generate for the same candidate.
+FRAMING_CACHE = {}
+
+
+def _get_framing(video, start, end):
+    key = (video["video_id"], round(start, 2), round(end, 2))
+    if key not in FRAMING_CACHE:
+        FRAMING_CACHE[key] = framing.detect_face_framing(video["video_path"], start, end)
+    return FRAMING_CACHE[key]
 
 
 def _analysis_path(video_id):
@@ -109,10 +121,10 @@ def analyze():
     data = request.get_json(force=True)
     url = (data.get("url") or "").strip()
     if not url:
-        return jsonify({"error": "Paste a YouTube link first."}), 400
+        return jsonify({"error": "Paste a video link first."}), 400
 
     try:
-        video = download.fetch_video(url)
+        video = download.fetch_source(url)
         candidates = rank.find_best_moments(video["words"], api_key)
     except Exception as e:
         traceback.print_exc()
@@ -139,6 +151,7 @@ def generate():
     video_id = data.get("video_id")
     start = data.get("start")
     end = data.get("end")
+    auto = data.get("auto", True)
     crop_x_pct = data.get("crop_x_pct", 0.5)
     caption_margin_v = data.get("caption_margin_v", 90)
     candidate_title = data.get("candidate_title", "")
@@ -150,12 +163,15 @@ def generate():
     if start is None or end is None or end <= start:
         return jsonify({"error": "Invalid clip times."}), 400
 
+    frame_info = _get_framing(video, float(start), float(end)) if auto else None
+
     try:
         output_path = clip.make_short(
             video["video_path"],
             video["words"],
             float(start),
             float(end),
+            framing=frame_info,
             crop_x_pct=float(crop_x_pct),
             caption_margin_v=float(caption_margin_v),
         )
@@ -178,6 +194,7 @@ def preview():
     start = data.get("start")
     end = data.get("end")
     timestamp = data.get("timestamp")
+    auto = data.get("auto", True)
     crop_x_pct = data.get("crop_x_pct", 0.5)
     caption_margin_v = data.get("caption_margin_v", 90)
 
@@ -187,6 +204,8 @@ def preview():
     if start is None or end is None or end <= start:
         return jsonify({"error": "Invalid clip times."}), 400
 
+    frame_info = _get_framing(video, float(start), float(end)) if auto else None
+
     try:
         output_path = clip.make_preview_frame(
             video["video_path"],
@@ -194,6 +213,7 @@ def preview():
             float(start),
             float(end),
             timestamp=float(timestamp) if timestamp is not None else None,
+            framing=frame_info,
             crop_x_pct=float(crop_x_pct),
             caption_margin_v=float(caption_margin_v),
         )
@@ -202,7 +222,7 @@ def preview():
         return jsonify({"error": str(e)}), 500
 
     filename = os.path.basename(output_path)
-    return jsonify({"url": f"/api/preview_file/{filename}"})
+    return jsonify({"url": f"/api/preview_file/{filename}", "auto_used": frame_info is not None})
 
 
 def _save_generated_sidecar(filename, video_id, source_title, candidate_title, reason, start, end, crop_x_pct, caption_margin_v):

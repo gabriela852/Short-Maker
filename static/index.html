@@ -113,6 +113,8 @@
   .adjust label { font-weight: 600; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
   .adjust .slider-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
   .adjust input[type=range] { width: 100%; margin: 2px 0 10px; }
+  .adjust summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--navy); margin-bottom: 8px; }
+  .adjust p.hint { margin-top: 0; }
   .generated-card .meta { font-size: 13px; color: var(--muted); margin: 2px 0; }
   .spinner {
     border: 3px solid #eee;
@@ -140,7 +142,7 @@
 
       <div id="createView">
         <h1>Shorts Maker</h1>
-        <p class="sub">Paste a link to one of your own YouTube videos. It finds the most engaging moment and turns it into a vertical, captioned short.</p>
+        <p class="sub">Paste a link to one of your own videos - a YouTube link or a Descript share link (great for videos you haven't published yet). It finds the most engaging moment and turns it into a vertical, captioned short.</p>
 
         <div class="card" id="settingsBox">
           <label for="apiKey">Anthropic API key (used to find the best moment)</label>
@@ -153,9 +155,9 @@
         <p id="settingsSaved">API key saved. <a href="#" onclick="showSettings(); return false;">Change it</a></p>
 
         <div class="card">
-          <label for="url">YouTube link</label>
+          <label for="url">Video link (YouTube or Descript)</label>
           <div class="row">
-            <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=...">
+            <input type="text" id="url" placeholder="youtube.com/watch?v=...  or  share.descript.com/view/...">
             <button id="analyzeBtn" onclick="analyze()">Find the best moment</button>
           </div>
           <div id="analyzeStatus"></div>
@@ -231,7 +233,7 @@ async function analyze() {
   const url = document.getElementById('url').value.trim();
   const statusEl = document.getElementById('analyzeStatus');
   const btn = document.getElementById('analyzeBtn');
-  if (!url) { statusEl.innerHTML = '<p class="error">Paste a YouTube link first.</p>'; return; }
+  if (!url) { statusEl.innerHTML = '<p class="error">Paste a video link first.</p>'; return; }
 
   btn.disabled = true;
   statusEl.innerHTML = '<p class="status"><span class="spinner"></span>Downloading and reading the video - this can take a minute or two...</p>';
@@ -303,7 +305,7 @@ function renderCandidateCard(domKey, videoId, c, container, eager) {
     video_id: videoId,
     candidate_title: c.title, reason: c.reason,
     start: c.start_seconds, end: c.end_seconds,
-    crop_x_pct: 0.5, caption_margin_v: 90,
+    auto: true, crop_x_pct: 0.5, caption_margin_v: 90,
   };
 
   const div = document.createElement('div');
@@ -313,14 +315,17 @@ function renderCandidateCard(domKey, videoId, c, container, eager) {
     <h3></h3>
     <p></p>
     <div class="preview-wrap"><img id="previewImg-${domKey}" alt="preview"></div>
-    <div class="adjust">
+    <details class="adjust">
+      <summary>Advanced: adjust manually</summary>
+      <p class="hint">We already try to center your face and place the captions well. Only touch these if it doesn't look right.</p>
       <label>Move left / right</label>
       <div class="slider-labels"><span>Left</span><span>Right</span></div>
       <input type="range" id="cropX-${domKey}" min="0" max="100" value="50" oninput="onSliderChange('${domKey}')">
       <label>Caption height</label>
       <div class="slider-labels"><span>Lower</span><span>Higher</span></div>
       <input type="range" id="capY-${domKey}" min="40" max="300" value="90" oninput="onSliderChange('${domKey}')">
-    </div>
+      <p><a href="#" onclick="resetToAuto('${domKey}'); return false;">Use automatic positioning again</a></p>
+    </details>
     <button onclick="generate('${domKey}')">Make this short</button>
     <div id="genStatus-${domKey}"></div>
   `;
@@ -328,6 +333,13 @@ function renderCandidateCard(domKey, videoId, c, container, eager) {
   div.querySelector('p').textContent = c.reason;
   container.appendChild(div);
   if (eager) updatePreview(domKey);
+}
+
+function resetToAuto(domKey) {
+  state[domKey].auto = true;
+  document.getElementById('cropX-' + domKey).value = 50;
+  document.getElementById('capY-' + domKey).value = 90;
+  updatePreview(domKey);
 }
 
 function renderGeneratedEntry(g, container) {
@@ -364,6 +376,7 @@ function renderGeneratedEntry(g, container) {
 function onSliderChange(domKey) {
   const cropX = document.getElementById('cropX-' + domKey).value / 100;
   const capY = document.getElementById('capY-' + domKey).value;
+  state[domKey].auto = false;
   state[domKey].crop_x_pct = cropX;
   state[domKey].caption_margin_v = capY;
 
@@ -382,7 +395,7 @@ async function updatePreview(domKey) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         video_id: s.video_id, start: s.start, end: s.end,
-        crop_x_pct: s.crop_x_pct, caption_margin_v: s.caption_margin_v
+        auto: s.auto, crop_x_pct: s.crop_x_pct, caption_margin_v: s.caption_margin_v
       })
     });
     const data = await res.json();
@@ -407,7 +420,7 @@ async function generate(domKey) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         video_id: s.video_id, start: s.start, end: s.end,
-        crop_x_pct: s.crop_x_pct, caption_margin_v: s.caption_margin_v,
+        auto: s.auto, crop_x_pct: s.crop_x_pct, caption_margin_v: s.caption_margin_v,
         candidate_title: s.candidate_title, reason: s.reason
       })
     });

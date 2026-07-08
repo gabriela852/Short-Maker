@@ -55,23 +55,52 @@ def _escape_for_filter(path):
     return path
 
 
+FFMPEG_ASS_DEFAULT_PLAYRES_Y = 288
+"""ffmpeg's SRT->ASS conversion doesn't declare a PlayResY, so libass falls back
+to this legacy SSA default and scales every ASS style value (MarginV, FontSize,
+Outline, ...) by TARGET_H/288 when rendering onto our actual 1080x1920 canvas.
+FontSize/Outline below happen to already look right because they were tuned by
+eye under this same scaling - but MarginV values were computed as real target
+pixels (e.g. by engine.framing's geometry), so only MarginV needs compensating
+back down by the inverse ratio before libass scales it back up."""
+
+
+def _ass_style(margin_v):
+    compensated_margin_v = int(round(margin_v * FFMPEG_ASS_DEFAULT_PLAYRES_Y / TARGET_H))
+    return (
+        "FontName=Arial,FontSize=13,Bold=1,PrimaryColour=&H00FFFFFF,"
+        "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,"
+        f"Alignment=2,MarginV={compensated_margin_v}"
+    )
+
+
 def _build_vf(srt_path, crop_x_pct=0.5, caption_margin_v=90):
     """Shared scale+crop+subtitles filter chain for both the full render and
     the single-frame preview. Scaling with force_original_aspect_ratio=increase
     guarantees the frame always covers the target 1080x1920, so the crop
-    always has valid non-negative slack regardless of the source aspect ratio."""
+    always has valid non-negative slack regardless of the source aspect ratio.
+    Used for the manual/Advanced fallback path (no face-detected framing)."""
     crop_x_pct = max(0.0, min(1.0, crop_x_pct))
-    style = (
-        "FontName=Arial,FontSize=13,Bold=1,PrimaryColour=&H00FFFFFF,"
-        "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,"
-        f"Alignment=2,MarginV={int(caption_margin_v)}"
-    )
-    subtitles_arg = f"subtitles='{_escape_for_filter(srt_path)}':force_style='{style}'"
+    subtitles_arg = f"subtitles='{_escape_for_filter(srt_path)}':force_style='{_ass_style(caption_margin_v)}'"
     crop_expr = f"crop={TARGET_W}:{TARGET_H}:x='(in_w-out_w)*{crop_x_pct:.4f}'"
     return (
         f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=increase,"
         f"{crop_expr},{subtitles_arg}"
     )
+
+
+def _build_filter(srt_path, framing, crop_x_pct, caption_margin_v):
+    """Builds the -vf filter chain. When `framing` is a face-detected crop
+    (from engine.framing.detect_face_framing) it scales to fill the frame and
+    crops the full-screen 9:16 window centered on the speaker's face. When
+    `framing` is None it uses the manual/Advanced crop_x_pct/caption_margin_v
+    values instead."""
+    if framing is None:
+        return _build_vf(srt_path, crop_x_pct, caption_margin_v)
+
+    subtitles_arg = f"subtitles='{_escape_for_filter(srt_path)}':force_style='{_ass_style(framing['margin_v'])}'"
+    crop_expr = f"crop={TARGET_W}:{TARGET_H}:x={framing['crop_x']}:y={framing['crop_y']}"
+    return f"scale={framing['scaled_w']}:{framing['scaled_h']},{crop_expr},{subtitles_arg}"
 
 
 def _sweep_old_previews():
@@ -84,7 +113,7 @@ def _sweep_old_previews():
             pass
 
 
-def make_short(video_path, words, start, end, output_name=None, crop_x_pct=0.5, caption_margin_v=90):
+def make_short(video_path, words, start, end, output_name=None, framing=None, crop_x_pct=0.5, caption_margin_v=90):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(WORK_DIR, exist_ok=True)
 
@@ -99,21 +128,15 @@ def make_short(video_path, words, start, end, output_name=None, crop_x_pct=0.5, 
     coarse_seek = max(0.0, start - 5)
     remainder_seek = start - coarse_seek
 
-    vf = _build_vf(srt_path, crop_x_pct, caption_margin_v)
+    vf = _build_filter(srt_path, framing, crop_x_pct, caption_margin_v)
 
     cmd = [
-        FFMPEG,
-        "-y",
-        "-ss", str(coarse_seek),
-        "-i", video_path,
-        "-ss", str(remainder_seek),
-        "-t", str(duration),
+        FFMPEG, "-y",
+        "-ss", str(coarse_seek), "-i", video_path,
+        "-ss", str(remainder_seek), "-t", str(duration),
         "-vf", vf,
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "20",
-        "-c:a", "aac",
-        "-b:a", "192k",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-c:a", "aac", "-b:a", "192k",
         output_path,
     ]
 
@@ -124,7 +147,7 @@ def make_short(video_path, words, start, end, output_name=None, crop_x_pct=0.5, 
     return output_path
 
 
-def make_preview_frame(video_path, words, start, end, timestamp=None, crop_x_pct=0.5, caption_margin_v=90):
+def make_preview_frame(video_path, words, start, end, timestamp=None, framing=None, crop_x_pct=0.5, caption_margin_v=90):
     """Extracts one JPEG frame with the same crop+caption filter chain used by
     make_short, so the user can see the result before committing to a full render."""
     os.makedirs(WORK_DIR, exist_ok=True)
@@ -139,17 +162,14 @@ def make_preview_frame(video_path, words, start, end, timestamp=None, crop_x_pct
     _build_srt(words, start, end, srt_path)
 
     output_path = os.path.join(WORK_DIR, f"preview_{job_id}.jpg")
-    vf = _build_vf(srt_path, crop_x_pct, caption_margin_v)
+    vf = _build_filter(srt_path, framing, crop_x_pct, caption_margin_v)
 
     cmd = [
-        FFMPEG,
-        "-y",
-        "-ss", str(max(0.0, timestamp)),
-        "-i", video_path,
+        FFMPEG, "-y",
+        "-ss", str(max(0.0, timestamp)), "-i", video_path,
         "-frames:v", "1",
         "-vf", vf,
-        "-q:v", "3",
-        output_path,
+        "-q:v", "3", output_path,
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
