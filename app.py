@@ -156,6 +156,7 @@ def generate():
     caption_margin_v = data.get("caption_margin_v", 90)
     candidate_title = data.get("candidate_title", "")
     reason = data.get("reason", "")
+    thumbnail_seconds = data.get("thumbnail_seconds")
 
     video = _get_video(video_id)
     if video is None:
@@ -180,11 +181,29 @@ def generate():
         return jsonify({"error": str(e)}), 500
 
     filename = os.path.basename(output_path)
+
+    # A ready-to-upload thumbnail: the punchiest caption line on a good frame.
+    # Never let a thumbnail hiccup fail the whole short - the short is the point.
+    thumb_time = float(thumbnail_seconds) if thumbnail_seconds is not None else float(start) + (float(end) - float(start)) * 0.33
+    thumbnail_filename = None
+    try:
+        thumb_path = clip.make_thumbnail(
+            video["video_path"], video["words"], float(start), float(end), thumb_time,
+            framing=frame_info, crop_x_pct=float(crop_x_pct), caption_margin_v=float(caption_margin_v),
+            output_name=os.path.splitext(filename)[0] + ".jpg",
+        )
+        thumbnail_filename = os.path.basename(thumb_path)
+    except Exception:
+        traceback.print_exc()
+
     _save_generated_sidecar(
         filename, video_id, video.get("title", video_id), candidate_title, reason,
-        float(start), float(end), float(crop_x_pct), float(caption_margin_v),
+        float(start), float(end), float(crop_x_pct), float(caption_margin_v), thumbnail_filename,
     )
-    return jsonify({"filename": filename, "url": f"/api/file/{filename}"})
+    resp = {"filename": filename, "url": f"/api/file/{filename}"}
+    if thumbnail_filename:
+        resp["thumbnail_url"] = f"/api/file/{thumbnail_filename}"
+    return jsonify(resp)
 
 
 @app.route("/api/preview", methods=["POST"])
@@ -225,7 +244,7 @@ def preview():
     return jsonify({"url": f"/api/preview_file/{filename}", "auto_used": frame_info is not None})
 
 
-def _save_generated_sidecar(filename, video_id, source_title, candidate_title, reason, start, end, crop_x_pct, caption_margin_v):
+def _save_generated_sidecar(filename, video_id, source_title, candidate_title, reason, start, end, crop_x_pct, caption_margin_v, thumbnail_filename=None):
     data = {
         "filename": filename,
         "video_id": video_id,
@@ -236,6 +255,7 @@ def _save_generated_sidecar(filename, video_id, source_title, candidate_title, r
         "end": end,
         "crop_x_pct": crop_x_pct,
         "caption_margin_v": caption_margin_v,
+        "thumbnail_filename": thumbnail_filename,
         "generated_at": datetime.datetime.now().isoformat(),
     }
     sidecar_path = os.path.join(OUTPUT_DIR, os.path.splitext(filename)[0] + ".json")
@@ -264,6 +284,9 @@ def history():
         if not os.path.isfile(os.path.join(OUTPUT_DIR, entry.get("filename", ""))):
             continue
         entry["url"] = f"/api/file/{entry['filename']}"
+        thumb = entry.get("thumbnail_filename")
+        if thumb and os.path.isfile(os.path.join(OUTPUT_DIR, thumb)):
+            entry["thumbnail_url"] = f"/api/file/{thumb}"
         generated.append(entry)
     generated.sort(key=lambda g: g.get("generated_at", ""), reverse=True)
 

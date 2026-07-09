@@ -96,6 +96,7 @@
   #settingsSaved { display: none; font-size: 13px; color: var(--muted); }
   #settingsSaved.show { display: block; }
   video { width: 100%; max-width: 300px; border-radius: 10px; display: block; margin: 12px 0; }
+  img.thumb-preview { width: 100%; max-width: 180px; border-radius: 10px; display: block; margin: 8px 0; }
   a.download { display: inline-block; margin-top: 6px; }
   .error { color: #b00020; font-size: 14px; margin-top: 10px; }
   .empty-hint { color: var(--muted); font-size: 14px; }
@@ -305,6 +306,7 @@ function renderCandidateCard(domKey, videoId, c, container, eager) {
     video_id: videoId,
     candidate_title: c.title, reason: c.reason,
     start: c.start_seconds, end: c.end_seconds,
+    thumbnail_seconds: c.thumbnail_seconds,
     auto: true, crop_x_pct: 0.5, caption_margin_v: 90,
   };
 
@@ -366,9 +368,25 @@ function renderGeneratedEntry(g, container) {
   link.download = g.filename;
   const dlBtn = document.createElement('button');
   dlBtn.className = 'secondary';
-  dlBtn.textContent = 'Download';
+  dlBtn.textContent = 'Download short';
   link.appendChild(dlBtn);
   div.appendChild(link);
+
+  if (g.thumbnail_url) {
+    const tImg = document.createElement('img');
+    tImg.className = 'thumb-preview';
+    tImg.src = g.thumbnail_url;
+    div.appendChild(tImg);
+    const tLink = document.createElement('a');
+    tLink.className = 'download';
+    tLink.href = g.thumbnail_url;
+    tLink.download = g.thumbnail_url.split('/').pop();
+    const tBtn = document.createElement('button');
+    tBtn.className = 'secondary';
+    tBtn.textContent = 'Download thumbnail';
+    tLink.appendChild(tBtn);
+    div.appendChild(tLink);
+  }
 
   container.appendChild(div);
 }
@@ -421,7 +439,8 @@ async function generate(domKey) {
       body: JSON.stringify({
         video_id: s.video_id, start: s.start, end: s.end,
         auto: s.auto, crop_x_pct: s.crop_x_pct, caption_margin_v: s.caption_margin_v,
-        candidate_title: s.candidate_title, reason: s.reason
+        candidate_title: s.candidate_title, reason: s.reason,
+        thumbnail_seconds: s.thumbnail_seconds
       })
     });
     const data = await res.json();
@@ -429,9 +448,17 @@ async function generate(domKey) {
       statusEl.innerHTML = '<p class="error">' + data.error + '</p>';
       return;
     }
+    let thumbBlock = '';
+    if (data.thumbnail_url) {
+      thumbBlock = `
+        <p class="hint" style="margin-top:14px"><strong>Suggested thumbnail</strong> (upload this as your Short's cover):</p>
+        <img class="thumb-preview" src="${data.thumbnail_url}" alt="thumbnail">
+        <a class="download" href="${data.thumbnail_url}" download="${data.thumbnail_url.split('/').pop()}"><button class="secondary">Download thumbnail</button></a>`;
+    }
     statusEl.innerHTML = `
       <video controls src="${data.url}"></video>
-      <a class="download" href="${data.url}" download="${data.filename}"><button class="secondary">Download</button></a>
+      <a class="download" href="${data.url}" download="${data.filename}"><button class="secondary">Download short</button></a>
+      ${thumbBlock}
       <p class="hint">Also saved under the History tab.</p>
     `;
   } catch (e) {

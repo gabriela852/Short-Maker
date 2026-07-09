@@ -26,9 +26,9 @@ def _srt_timestamp(seconds):
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def _build_srt(words, clip_start, clip_end, srt_path):
+def _chunk_words(words, clip_start, clip_end):
+    """Groups the clip's words into caption chunks (the running on-screen lines)."""
     segment_words = [w for w in words if w["end"] > clip_start and w["start"] < clip_end]
-
     entries = []
     chunk = []
     for w in segment_words:
@@ -38,13 +38,44 @@ def _build_srt(words, clip_start, clip_end, srt_path):
             chunk = []
     if chunk:
         entries.append(chunk)
+    return entries
 
+
+def _build_srt(words, clip_start, clip_end, srt_path, time_origin=None):
+    """Writes the caption SRT for the words inside [clip_start, clip_end].
+    `time_origin` is the timestamp that ffmpeg's subtitles filter treats as 0 -
+    which is the *input-seek* point, NOT the clip start. When ffmpeg does a fast
+    pre-roll seek before the clip (see make_short), captions must be timed from
+    that pre-roll point or they render early and drift out of sync with the
+    voice. Defaults to clip_start for callers that don't pre-roll."""
+    if time_origin is None:
+        time_origin = clip_start
+    entries = _chunk_words(words, clip_start, clip_end)
     with open(srt_path, "w", encoding="utf-8") as f:
         for i, chunk in enumerate(entries, start=1):
-            start = max(0.0, chunk[0]["start"] - clip_start)
-            end = max(0.0, chunk[-1]["end"] - clip_start)
+            start = max(0.0, chunk[0]["start"] - time_origin)
+            end = max(0.0, chunk[-1]["end"] - time_origin)
             text = " ".join(w["text"].strip() for w in chunk)
             f.write(f"{i}\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\n{text}\n\n")
+
+
+def _caption_at(words, clip_start, clip_end, t):
+    """The on-screen caption line (same chunking as the running captions) that
+    is showing at absolute time `t` - used to put the right line on the
+    thumbnail. Falls back to the nearest chunk if `t` lands in a gap."""
+    entries = _chunk_words(words, clip_start, clip_end)
+    if not entries:
+        return ""
+
+    def text_of(chunk):
+        return " ".join(w["text"].strip() for w in chunk)
+
+    for chunk in entries:
+        if chunk[0]["start"] <= t <= chunk[-1]["end"]:
+            return text_of(chunk)
+    # gap: pick the chunk whose midpoint is closest to t
+    nearest = min(entries, key=lambda c: abs(((c[0]["start"] + c[-1]["end"]) / 2) - t))
+    return text_of(nearest)
 
 
 def _escape_for_filter(path):
@@ -119,7 +150,6 @@ def make_short(video_path, words, start, end, output_name=None, framing=None, cr
 
     job_id = uuid.uuid4().hex[:8]
     srt_path = os.path.join(WORK_DIR, f"{job_id}.srt")
-    _build_srt(words, start, end, srt_path)
 
     output_name = output_name or f"short_{job_id}.mp4"
     output_path = os.path.join(OUTPUT_DIR, output_name)
@@ -127,6 +157,10 @@ def make_short(video_path, words, start, end, output_name=None, framing=None, cr
     duration = end - start
     coarse_seek = max(0.0, start - 5)
     remainder_seek = start - coarse_seek
+
+    # Captions must be timed from the pre-roll seek point (coarse_seek), not the
+    # clip start, so the subtitles filter renders them in sync with the voice.
+    _build_srt(words, start, end, srt_path, time_origin=coarse_seek)
 
     vf = _build_filter(srt_path, framing, crop_x_pct, caption_margin_v)
 
@@ -159,7 +193,9 @@ def make_preview_frame(video_path, words, start, end, timestamp=None, framing=No
 
     job_id = uuid.uuid4().hex[:8]
     srt_path = os.path.join(WORK_DIR, f"preview_{job_id}.srt")
-    _build_srt(words, start, end, srt_path)
+    # Single input-seek to `timestamp`, so time the captions from there - shows
+    # the caption that actually belongs to the previewed frame.
+    _build_srt(words, start, end, srt_path, time_origin=timestamp)
 
     output_path = os.path.join(WORK_DIR, f"preview_{job_id}.jpg")
     vf = _build_filter(srt_path, framing, crop_x_pct, caption_margin_v)
@@ -180,5 +216,79 @@ def make_preview_frame(video_path, words, start, end, timestamp=None, framing=No
 
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg preview failed:\n{result.stderr[-2000:]}")
+
+    return output_path
+
+
+def _best_face_time(video_path, t, lo, hi, window=0.4, samples=5):
+    """Nudges the thumbnail timestamp to a nearby frame where a face is most
+    clearly detected (largest frontal face) - avoids mid-blinks and awkward
+    mid-word mouth shapes. Falls back to `t` if nothing is detected."""
+    try:
+        import cv2
+        cap = cv2.VideoCapture(video_path)
+        casc = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        best_t, best_area = None, 0
+        for i in range(samples):
+            frac = 0.0 if samples == 1 else i / (samples - 1)
+            ct = max(lo, min(hi, (t - window) + (2 * window) * frac))
+            cap.set(cv2.CAP_PROP_POS_MSEC, ct * 1000)
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            h, w = frame.shape[:2]
+            sd = 640.0 / w if w else 1.0
+            gray = cv2.cvtColor(cv2.resize(frame, (0, 0), fx=sd, fy=sd), cv2.COLOR_BGR2GRAY)
+            faces = casc.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
+            if len(faces):
+                area = max(f[2] * f[3] for f in faces)
+                if area > best_area:
+                    best_area, best_t = area, ct
+        cap.release()
+        return best_t if best_t is not None else t
+    except Exception:
+        return t
+
+
+def make_thumbnail(video_path, words, start, end, thumb_time, framing=None,
+                   crop_x_pct=0.5, caption_margin_v=90, output_name=None):
+    """Saves a ready-to-upload 1080x1920 thumbnail JPEG: the most
+    attention-grabbing caption line of the clip, on a frame where the speaker's
+    face looks good. Same crop/caption styling as the short itself."""
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(WORK_DIR, exist_ok=True)
+
+    thumb_time = max(start, min(end, thumb_time))
+    caption = _caption_at(words, start, end, thumb_time)
+    frame_t = _best_face_time(video_path, thumb_time, start, end)
+
+    job_id = uuid.uuid4().hex[:8]
+    srt_path = os.path.join(WORK_DIR, f"thumb_{job_id}.srt")
+    # One caption spanning the whole (tiny) clip timeline - because we extract
+    # with an input seek, the frame's timeline starts at ~0, so the line must
+    # be placed at 00:00 to appear on the still.
+    with open(srt_path, "w", encoding="utf-8") as f:
+        f.write(f"1\n{_srt_timestamp(0)} --> {_srt_timestamp(10)}\n{caption}\n\n")
+
+    vf = _build_filter(srt_path, framing, crop_x_pct, caption_margin_v)
+
+    output_name = output_name or f"thumb_{job_id}.jpg"
+    output_path = os.path.join(OUTPUT_DIR, output_name)
+    cmd = [
+        FFMPEG, "-y",
+        "-ss", str(max(0.0, frame_t)), "-i", video_path,
+        "-frames:v", "1",
+        "-vf", vf,
+        "-q:v", "2", output_path,
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        os.remove(srt_path)
+    except OSError:
+        pass
+
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg thumbnail failed:\n{result.stderr[-2000:]}")
 
     return output_path

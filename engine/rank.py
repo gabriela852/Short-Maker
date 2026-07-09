@@ -29,8 +29,12 @@ PICK_SHORTS_TOOL = {
                             "type": "string",
                             "description": "One or two sentences on why this moment is the most engaging - what the hook, payoff, or emotional beat is.",
                         },
+                        "thumbnail_seconds": {
+                            "type": "number",
+                            "description": "The timestamp (within start_seconds..end_seconds) of the single best frame to use as the thumbnail: the moment when the most attention-grabbing, curiosity-driving line of the clip is being said, so that line appears as on-screen caption text on the thumbnail. Pick a scroll-stopping line (a bold claim, a surprising reveal, an emotional peak), not the very first or last word.",
+                        },
                     },
-                    "required": ["start_seconds", "end_seconds", "title", "reason"],
+                    "required": ["start_seconds", "end_seconds", "title", "reason", "thumbnail_seconds"],
                 },
             }
         },
@@ -127,6 +131,13 @@ def find_best_moments(words, api_key):
                 snapped_start, snapped_end = _snap_to_words(c["start_seconds"], c["end_seconds"], words)
                 c["start_seconds"] = round(snapped_start, 2)
                 c["end_seconds"] = round(snapped_end, 2)
+                # Keep the thumbnail moment inside the clip; default to ~1/3 in
+                # (past the opening word, into the hook) if Claude omitted it.
+                thumb = c.get("thumbnail_seconds")
+                if thumb is None:
+                    thumb = snapped_start + (snapped_end - snapped_start) * 0.33
+                thumb = max(snapped_start, min(snapped_end, thumb))
+                c["thumbnail_seconds"] = round(thumb, 2)
             return candidates
 
     raise RuntimeError("Claude didn't return a structured answer. Try again.")
