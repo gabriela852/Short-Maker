@@ -116,6 +116,19 @@
   .adjust input[type=range] { width: 100%; margin: 2px 0 10px; }
   .adjust summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--navy); margin-bottom: 8px; }
   .adjust p.hint { margin-top: 0; }
+  .trim { margin-top: 12px; padding: 12px 14px; background: #faf9f6; border: 1px solid #eee; border-radius: 10px; max-width: 420px; }
+  .trim .trim-hint { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+  .trim-edge { margin-bottom: 10px; }
+  .trim-edge:last-child { margin-bottom: 0; }
+  .trim-edge .trim-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--gold); }
+  .trim-edge .trim-text { font-size: 13px; color: var(--text); font-style: italic; display: block; margin: 2px 0 6px; }
+  .trim-btns { display: flex; gap: 8px; }
+  .trim-btns button {
+    margin-top: 0; padding: 5px 10px; font-size: 12px; font-weight: 600;
+    background: #fff; color: var(--navy); border: 1px solid #d6d2c4;
+  }
+  .trim-btns button:hover { background: #f0ede4; opacity: 1; }
+  .trim-dur { font-size: 13px; font-weight: 600; color: var(--navy); margin-top: 10px; }
   .generated-card .meta { font-size: 13px; color: var(--muted); margin: 2px 0; }
   .spinner {
     border: 3px solid #eee;
@@ -257,7 +270,7 @@ async function analyze() {
     const container = document.getElementById('freshResults');
     data.candidates.forEach((c, i) => {
       const domKey = `create-${data.video_id}-${i}`;
-      renderCandidateCard(domKey, data.video_id, c, container, true);
+      renderCandidateCard(domKey, data.video_id, c, data.segments, container, true);
     });
   } catch (e) {
     statusEl.innerHTML = '<p class="error">Something went wrong: ' + e + '</p>';
@@ -297,26 +310,55 @@ function renderAnalysisEntry(entry, container) {
 
   entry.candidates.forEach((c, i) => {
     const domKey = `history-${entry.video_id}-${i}`;
-    renderCandidateCard(domKey, entry.video_id, c, wrap, true);
+    renderCandidateCard(domKey, entry.video_id, c, entry.segments, wrap, true);
   });
 }
 
-function renderCandidateCard(domKey, videoId, c, container, eager) {
+function renderCandidateCard(domKey, videoId, c, segments, container, eager) {
+  segments = segments || [];
+  // Fall back gracefully for older analyses saved before trim existed.
+  const hasSegs = segments.length > 0 && c.start_index != null && c.end_index != null;
   state[domKey] = {
     video_id: videoId,
     candidate_title: c.title, reason: c.reason,
     start: c.start_seconds, end: c.end_seconds,
     thumbnail_seconds: c.thumbnail_seconds,
+    segments: segments,
+    startIdx: hasSegs ? c.start_index : null,
+    endIdx: hasSegs ? c.end_index : null,
     auto: true, crop_x_pct: 0.5, caption_margin_v: 90,
   };
+
+  const trimBlock = hasSegs ? `
+    <div class="trim">
+      <p class="trim-hint">Trim where the clip starts and ends - one sentence at a time.</p>
+      <div class="trim-edge">
+        <span class="trim-label">Opens with</span>
+        <span class="trim-text" id="opens-${domKey}"></span>
+        <div class="trim-btns">
+          <button onclick="nudge('${domKey}','start',-1)">◂ Start earlier</button>
+          <button onclick="nudge('${domKey}','start',1)">Start later ▸</button>
+        </div>
+      </div>
+      <div class="trim-edge">
+        <span class="trim-label">Ends with</span>
+        <span class="trim-text" id="ends-${domKey}"></span>
+        <div class="trim-btns">
+          <button onclick="nudge('${domKey}','end',-1)">◂ End sooner</button>
+          <button onclick="nudge('${domKey}','end',1)">End later ▸</button>
+        </div>
+      </div>
+      <div class="trim-dur" id="dur-${domKey}"></div>
+    </div>` : '';
 
   const div = document.createElement('div');
   div.className = 'candidate';
   div.innerHTML = `
-    <div class="time">${formatTime(c.start_seconds)} - ${formatTime(c.end_seconds)}</div>
+    <div class="time" id="time-${domKey}">${formatTime(c.start_seconds)} - ${formatTime(c.end_seconds)}</div>
     <h3></h3>
     <p></p>
     <div class="preview-wrap"><img id="previewImg-${domKey}" alt="preview"></div>
+    ${trimBlock}
     <details class="adjust">
       <summary>Advanced: adjust manually</summary>
       <p class="hint">We already try to center your face and place the captions well. Only touch these if it doesn't look right.</p>
@@ -334,7 +376,46 @@ function renderCandidateCard(domKey, videoId, c, container, eager) {
   div.querySelector('h3').textContent = c.title;
   div.querySelector('p').textContent = c.reason;
   container.appendChild(div);
+  if (hasSegs) updateTrimUI(domKey);
   if (eager) updatePreview(domKey);
+}
+
+function edgeWords(text, fromEnd) {
+  const words = (text || '').split(/\s+/).filter(Boolean);
+  const N = 10;
+  if (words.length <= N) return text;
+  return fromEnd ? '…' + words.slice(-N).join(' ') : words.slice(0, N).join(' ') + '…';
+}
+
+function updateTrimUI(domKey) {
+  const s = state[domKey];
+  if (s.startIdx == null) return;
+  const opens = s.segments[s.startIdx].text;
+  const ends = s.segments[s.endIdx].text;
+  document.getElementById('opens-' + domKey).textContent = '“' + edgeWords(opens, false) + '”';
+  document.getElementById('ends-' + domKey).textContent = '“' + edgeWords(ends, true) + '”';
+  const secs = Math.round(s.end - s.start);
+  document.getElementById('dur-' + domKey).textContent = 'Clip length: ' + secs + 's';
+  document.getElementById('time-' + domKey).textContent = formatTime(s.start) + ' - ' + formatTime(s.end);
+}
+
+function nudge(domKey, edge, delta) {
+  const s = state[domKey];
+  if (s.startIdx == null) return;
+  if (edge === 'start') {
+    const v = s.startIdx + delta;
+    if (v < 0 || v >= s.endIdx) return;   // keep at least one segment
+    s.startIdx = v;
+    s.start = s.segments[v].start;
+  } else {
+    const v = s.endIdx + delta;
+    if (v > s.segments.length - 1 || v <= s.startIdx) return;
+    s.endIdx = v;
+    s.end = s.segments[v].end;
+  }
+  updateTrimUI(domKey);
+  clearTimeout(debounceTimers[domKey]);
+  debounceTimers[domKey] = setTimeout(() => updatePreview(domKey), 250);
 }
 
 function resetToAuto(domKey) {
@@ -431,6 +512,9 @@ async function updatePreview(domKey) {
 async function generate(domKey) {
   const statusEl = document.getElementById('genStatus-' + domKey);
   const s = state[domKey];
+  // Trimming can move the clip past the auto-picked thumbnail moment - keep it inside.
+  let thumb = s.thumbnail_seconds;
+  if (thumb == null || thumb < s.start || thumb > s.end) thumb = null;
   statusEl.innerHTML = '<p class="status"><span class="spinner"></span>Cutting, reframing to vertical, and adding captions...</p>';
   try {
     const res = await fetch('/api/generate', {
@@ -440,7 +524,7 @@ async function generate(domKey) {
         video_id: s.video_id, start: s.start, end: s.end,
         auto: s.auto, crop_x_pct: s.crop_x_pct, caption_margin_v: s.caption_margin_v,
         candidate_title: s.candidate_title, reason: s.reason,
-        thumbnail_seconds: s.thumbnail_seconds
+        thumbnail_seconds: thumb
       })
     });
     const data = await res.json();

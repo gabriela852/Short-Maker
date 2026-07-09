@@ -46,12 +46,13 @@ def _analysis_path(video_id):
     return os.path.join(ANALYSES_DIR, f"{video_id}.json")
 
 
-def _save_analysis(video_id, title, duration, candidates):
+def _save_analysis(video_id, title, duration, candidates, segments):
     data = {
         "video_id": video_id,
         "title": title,
         "duration": duration,
         "candidates": candidates,
+        "segments": segments,
         "analyzed_at": datetime.datetime.now().isoformat(),
     }
     path = _analysis_path(video_id)
@@ -125,7 +126,7 @@ def analyze():
 
     try:
         video = download.fetch_source(url)
-        candidates = rank.find_best_moments(video["words"], api_key)
+        candidates, segments = rank.find_best_moments(video["words"], api_key)
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -133,7 +134,7 @@ def analyze():
     VIDEO_CACHE[video["video_id"]] = video
 
     duration = video["words"][-1]["end"] if video["words"] else 0
-    _save_analysis(video["video_id"], video["title"], duration, candidates)
+    _save_analysis(video["video_id"], video["title"], duration, candidates, segments)
 
     return jsonify(
         {
@@ -141,6 +142,7 @@ def analyze():
             "title": video["title"],
             "duration": duration,
             "candidates": candidates,
+            "segments": segments,
         }
     )
 
