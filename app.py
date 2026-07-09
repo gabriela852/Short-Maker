@@ -7,6 +7,7 @@ import uuid
 
 from dotenv import load_dotenv, set_key
 from flask import Flask, jsonify, request, send_from_directory
+from send2trash import send2trash
 
 from engine import download, rank, clip, framing
 
@@ -293,6 +294,46 @@ def history():
     generated.sort(key=lambda g: g.get("generated_at", ""), reverse=True)
 
     return jsonify({"analyses": analyses, "generated": generated})
+
+
+@app.route("/api/delete", methods=["POST"])
+def delete_short():
+    """Removes a generated short from History. Sends the video, its thumbnail,
+    and its sidecar to the Recycle Bin (recoverable) rather than deleting them
+    outright, so a misclick is never permanent."""
+    data = request.get_json(force=True)
+    filename = os.path.basename((data.get("filename") or "").strip())
+    if not filename:
+        return jsonify({"error": "No file specified."}), 400
+
+    # Path safety: the resolved target must stay inside OUTPUT_DIR.
+    target = os.path.abspath(os.path.join(OUTPUT_DIR, filename))
+    if os.path.commonpath([target, os.path.abspath(OUTPUT_DIR)]) != os.path.abspath(OUTPUT_DIR):
+        return jsonify({"error": "Invalid file path."}), 400
+
+    stem = os.path.splitext(filename)[0]
+    to_trash = [filename, stem + ".json"]
+
+    # The sidecar knows the real thumbnail name; fall back to the stem's .jpg.
+    sidecar_path = os.path.join(OUTPUT_DIR, stem + ".json")
+    try:
+        with open(sidecar_path, "r", encoding="utf-8") as f:
+            thumb = json.load(f).get("thumbnail_filename")
+        if thumb:
+            to_trash.append(os.path.basename(thumb))
+    except (OSError, json.JSONDecodeError):
+        to_trash.append(stem + ".jpg")
+
+    # Trash each piece if it's actually there; a partial cleanup should still succeed.
+    for name in to_trash:
+        path = os.path.join(OUTPUT_DIR, name)
+        if os.path.isfile(path):
+            try:
+                send2trash(path)
+            except OSError:
+                traceback.print_exc()
+
+    return jsonify({"ok": True})
 
 
 @app.route("/api/file/<path:filename>")

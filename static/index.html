@@ -130,6 +130,45 @@
   .trim-btns button:hover { background: #f0ede4; opacity: 1; }
   .trim-dur { font-size: 13px; font-weight: 600; color: var(--navy); margin-top: 10px; }
   .generated-card .meta { font-size: 13px; color: var(--muted); margin: 2px 0; }
+  /* History: "Shorts you've made" — side-by-side vertical cards */
+  .source-group { margin-bottom: 28px; }
+  .source-group-head {
+    display: flex; align-items: baseline; gap: 8px;
+    margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid #e7e4dc;
+  }
+  .source-group-head .src-name { font-size: 15px; font-weight: 700; color: var(--navy); }
+  .source-group-head .src-count { font-size: 13px; color: var(--muted); }
+  .shorts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 16px;
+  }
+  .short-card {
+    background: var(--card);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    display: flex; flex-direction: column;
+  }
+  .short-thumb { position: relative; background: #000; aspect-ratio: 9 / 16; }
+  .short-thumb video { width: 100%; height: 100%; max-width: none; margin: 0; border-radius: 0; object-fit: cover; display: block; }
+  .short-thumb .dur-chip {
+    position: absolute; left: 8px; bottom: 8px;
+    background: rgba(0,0,0,0.72); color: #fff;
+    font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 6px;
+    pointer-events: none;
+  }
+  .short-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .short-title { font-size: 13px; font-weight: 600; color: var(--text); margin: 0; line-height: 1.3; }
+  .short-range, .short-date { font-size: 12px; color: var(--muted); margin: 0; display: flex; align-items: center; gap: 5px; }
+  .short-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .short-actions a.download { margin-top: 0; flex: 1; }
+  .short-actions a.download button { margin-top: 0; width: 100%; padding: 7px 10px; font-size: 12px; }
+  .del-btn {
+    margin-top: 0; padding: 7px 9px; font-size: 14px; line-height: 1;
+    background: #fff; color: #b00020; border: 1px solid #e6ccd0;
+  }
+  .del-btn:hover { background: #fbeef0; opacity: 1; }
   .spinner {
     border: 3px solid #eee;
     border-top: 3px solid var(--navy);
@@ -295,8 +334,41 @@ async function loadHistory() {
 
   if (!data.generated.length) {
     generatedList.innerHTML = '<p class="empty-hint">No shorts made yet.</p>';
+  } else {
+    renderGeneratedGroups(data.generated, generatedList);
   }
-  data.generated.forEach(g => renderGeneratedEntry(g, generatedList));
+}
+
+// Group the shorts by the video they came from, most-recent group first, and
+// render each group as a header + a side-by-side grid of cards.
+function renderGeneratedGroups(generated, container) {
+  const groups = new Map();  // video_id -> { title, items:[] }
+  generated.forEach(g => {
+    const key = g.video_id || g.source_title || 'unknown';
+    if (!groups.has(key)) groups.set(key, { title: g.source_title || g.video_id || 'Your video', items: [] });
+    groups.get(key).items.push(g);
+  });
+
+  const mostRecent = grp => grp.items.reduce((m, g) => g.generated_at > m ? g.generated_at : m, '');
+  const ordered = [...groups.values()].sort((a, b) => mostRecent(b).localeCompare(mostRecent(a)));
+
+  ordered.forEach(grp => {
+    const section = document.createElement('div');
+    section.className = 'source-group';
+    const n = grp.items.length;
+    const head = document.createElement('div');
+    head.className = 'source-group-head';
+    head.innerHTML = '<span class="src-name"></span><span class="src-count"></span>';
+    head.querySelector('.src-name').textContent = grp.title;
+    head.querySelector('.src-count').textContent = n + (n === 1 ? ' short' : ' shorts');
+    section.appendChild(head);
+
+    const grid = document.createElement('div');
+    grid.className = 'shorts-grid';
+    grp.items.forEach(g => renderGeneratedEntry(g, grid));
+    section.appendChild(grid);
+    container.appendChild(section);
+  });
 }
 
 function renderAnalysisEntry(entry, container) {
@@ -426,50 +498,72 @@ function resetToAuto(domKey) {
 }
 
 function renderGeneratedEntry(g, container) {
-  const div = document.createElement('div');
-  div.className = 'card generated-card';
-  div.innerHTML = `
-    <h3></h3>
-    <p class="meta"></p>
-    <p class="meta"></p>
-  `;
-  const [titleEl, fromEl, whenEl] = div.querySelectorAll('h3, .meta');
-  titleEl.textContent = g.candidate_title || 'Short';
-  fromEl.textContent = `From "${g.source_title || g.video_id}" - ${formatTime(g.start)} to ${formatTime(g.end)}`;
-  whenEl.textContent = g.generated_at ? `Made ${new Date(g.generated_at).toLocaleString()}` : '';
+  const card = document.createElement('div');
+  card.className = 'short-card';
 
+  const thumb = document.createElement('div');
+  thumb.className = 'short-thumb';
   const videoEl = document.createElement('video');
   videoEl.controls = true;
+  videoEl.preload = 'none';
+  if (g.thumbnail_url) videoEl.poster = g.thumbnail_url;
   videoEl.src = g.url;
-  div.appendChild(videoEl);
+  thumb.appendChild(videoEl);
+  const durChip = document.createElement('span');
+  durChip.className = 'dur-chip';
+  durChip.textContent = formatTime(Math.max(0, (g.end || 0) - (g.start || 0)));
+  thumb.appendChild(durChip);
+  card.appendChild(thumb);
 
+  const body = document.createElement('div');
+  body.className = 'short-body';
+  body.innerHTML = `
+    <p class="short-title"></p>
+    <p class="short-range">🕐 <span></span></p>
+    <p class="short-date">📅 <span></span></p>
+    <div class="short-actions"></div>
+  `;
+  body.querySelector('.short-title').textContent = g.candidate_title || 'Short';
+  body.querySelector('.short-range span').textContent = `${formatTime(g.start)} – ${formatTime(g.end)}`;
+  body.querySelector('.short-date span').textContent =
+    g.generated_at ? new Date(g.generated_at).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'}) : 'Unknown date';
+
+  const actions = body.querySelector('.short-actions');
   const link = document.createElement('a');
   link.className = 'download';
   link.href = g.url;
   link.download = g.filename;
   const dlBtn = document.createElement('button');
   dlBtn.className = 'secondary';
-  dlBtn.textContent = 'Download short';
+  dlBtn.textContent = 'Download';
   link.appendChild(dlBtn);
-  div.appendChild(link);
+  actions.appendChild(link);
 
-  if (g.thumbnail_url) {
-    const tImg = document.createElement('img');
-    tImg.className = 'thumb-preview';
-    tImg.src = g.thumbnail_url;
-    div.appendChild(tImg);
-    const tLink = document.createElement('a');
-    tLink.className = 'download';
-    tLink.href = g.thumbnail_url;
-    tLink.download = g.thumbnail_url.split('/').pop();
-    const tBtn = document.createElement('button');
-    tBtn.className = 'secondary';
-    tBtn.textContent = 'Download thumbnail';
-    tLink.appendChild(tBtn);
-    div.appendChild(tLink);
+  const delBtn = document.createElement('button');
+  delBtn.className = 'del-btn';
+  delBtn.title = 'Delete this short';
+  delBtn.textContent = '🗑';
+  delBtn.onclick = () => deleteShort(g, card);
+  actions.appendChild(delBtn);
+
+  card.appendChild(body);
+  container.appendChild(card);
+}
+
+async function deleteShort(g, card) {
+  if (!confirm(`Delete "${g.candidate_title || 'this short'}"?\n\nIt will be moved to your Recycle Bin, so you can restore it if needed.`)) return;
+  try {
+    const res = await fetch('/api/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename: g.filename})
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    loadHistory();  // rebuild groups/counts cleanly
+  } catch (e) {
+    alert('Something went wrong deleting that short: ' + e);
   }
-
-  container.appendChild(div);
 }
 
 function onSliderChange(domKey) {
