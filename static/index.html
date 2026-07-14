@@ -221,10 +221,7 @@
 
       <div id="historyView" style="display:none">
         <h1>History</h1>
-        <p class="sub">Everything you've analyzed and every short you've made, saved on this computer.</p>
-
-        <h2 class="section-heading">Videos you've analyzed</h2>
-        <div id="analyzedList"></div>
+        <p class="sub">Every short you've made, saved on this computer.</p>
 
         <h2 class="section-heading">Shorts you've made</h2>
         <div id="generatedList"></div>
@@ -322,15 +319,8 @@ async function loadHistory() {
   const res = await fetch('/api/history');
   const data = await res.json();
 
-  const analyzedList = document.getElementById('analyzedList');
   const generatedList = document.getElementById('generatedList');
-  analyzedList.innerHTML = '';
   generatedList.innerHTML = '';
-
-  if (!data.analyses.length) {
-    analyzedList.innerHTML = '<p class="empty-hint">Nothing analyzed yet.</p>';
-  }
-  data.analyses.forEach(entry => renderAnalysisEntry(entry, analyzedList));
 
   if (!data.generated.length) {
     generatedList.innerHTML = '<p class="empty-hint">No shorts made yet.</p>';
