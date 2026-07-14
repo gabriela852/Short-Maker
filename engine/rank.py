@@ -29,7 +29,7 @@ PICK_SHORTS_TOOL = {
                     "properties": {
                         "start_index": {
                             "type": "integer",
-                            "description": "Index of the FIRST segment to include in the clip. The clip must open here, so choose a segment that works as a strong hook.",
+                            "description": "Index of the FIRST segment to include in the clip. The clip opens here, so this MUST be the single most shocking, beautiful, surprising, or high-energy moment you can start on - the hook that lands in the very first second. Never open on setup, context, or preamble.",
                         },
                         "end_index": {
                             "type": "integer",
@@ -64,8 +64,11 @@ You are given a transcript that has already been split into numbered segments, o
 [1] (00:03) I just won a hackathon and I'm not a software engineer.
 
 Find the 3 best possible standalone clips. A great clip:
-- Opens on a segment that is an immediate hook (a bold claim, a question, a surprising statement) - viewers decide in \
-1-2 seconds whether to keep watching.
+- OPENS ON THE MOST SCROLL-STOPPING MOMENT of the clip - the single most shocking, beautiful, surprising, or \
+high-energy line you can find. This is the hook, and it MUST land in the very first second: viewers decide in 1-2 \
+seconds whether to keep watching, so never open on setup, context, or slow build-up. Start exactly where the energy \
+peaks and let the clip play forward from there. Only include a lead-in segment before that peak if the moment is \
+genuinely impossible to follow without it, and keep any such lead-in to a single short segment.
 - Is self-contained: a viewer who has never seen the full video can follow it without missing context.
 - Has a clear payoff, punchline, emotional peak, or "aha" moment, and ENDS on the segment that completes that thought.
 - Is roughly 25 to 60 seconds long (prefer 30-45s) - add up the segment durations to judge length.
