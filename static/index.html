@@ -45,7 +45,17 @@
   .nav-item:hover { background: rgba(255,255,255,0.08); }
   .nav-item.active { background: var(--gold); color: var(--navy); }
   .content { flex: 1; padding: 32px 24px 80px; }
-  .content-inner { max-width: 680px; }
+  .content-inner { max-width: 1040px; }
+  /* Keep the input/settings cards compact even though the page is wider now. */
+  #createView > .card { max-width: 680px; }
+  /* Candidate moments sit side by side (like CapCut), wrapping to new rows. */
+  #freshResults {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+    align-items: start;
+  }
+  #freshResults .candidate { margin-top: 0; background: var(--card); }
   h1 { color: var(--navy); font-size: 26px; margin: 0 0 4px; }
   .sub { color: var(--muted); margin-top: 0; margin-bottom: 24px; }
   h2.section-heading { font-size: 16px; color: var(--navy); margin: 28px 0 6px; }
@@ -169,6 +179,24 @@
     background: #fff; color: #b00020; border: 1px solid #e6ccd0;
   }
   .del-btn:hover { background: #fbeef0; opacity: 1; }
+  /* Post to YouTube */
+  .short-actions .yt-btn {
+    margin-top: 0; width: 100%; padding: 7px 10px; font-size: 12px;
+    background: #c4302b; color: #fff; display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .short-actions .yt-btn:hover { background: #a82722; opacity: 1; }
+  .short-actions .yt-btn:disabled { background: #d8a8a5; }
+  .short-actions .action-row { display: flex; align-items: center; gap: 8px; width: 100%; }
+  .short-actions .action-row a.download { flex: 1; }
+  .yt-status { font-size: 12px; margin-top: 8px; line-height: 1.4; }
+  .yt-status a { color: var(--navy); font-weight: 600; }
+  .yt-status.err { color: #b00020; }
+  .yt-connect-card { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .yt-connect-card .yt-dot { font-size: 14px; color: var(--muted); flex: 1; min-width: 200px; }
+  .yt-connect-card button { margin-top: 0; }
+  .yt-connect-card .yt-btn { background: #c4302b; color: #fff; }
+  .yt-connect-card .yt-btn:hover { background: #a82722; opacity: 1; }
+  .yt-connect-card a.link { color: var(--navy); font-weight: 600; }
   .spinner {
     border: 3px solid #eee;
     border-top: 3px solid var(--navy);
@@ -223,6 +251,8 @@
         <h1>History</h1>
         <p class="sub">Every short you've made, saved on this computer.</p>
 
+        <div class="card yt-connect-card" id="ytConnectCard" style="display:none"></div>
+
         <h2 class="section-heading">Shorts you've made</h2>
         <div id="generatedList"></div>
       </div>
@@ -234,6 +264,7 @@
 <script>
 let state = {};  // state[domKey] = {video_id, video_title, candidate_title, reason, start, end, crop_x_pct, caption_margin_v}
 let debounceTimers = {};
+let youtubeState = {has_client_secret: false, connected: false};
 
 function showTab(tab) {
   document.getElementById('createView').style.display = tab === 'create' ? '' : 'none';
@@ -315,7 +346,109 @@ async function analyze() {
   }
 }
 
+// ---- Post to YouTube -------------------------------------------------------
+
+async function refreshYouTubeState() {
+  try {
+    const res = await fetch('/api/youtube/status');
+    youtubeState = await res.json();
+  } catch (e) {
+    youtubeState = {has_client_secret: false, connected: false};
+  }
+  renderYtConnectCard();
+}
+
+function renderYtConnectCard() {
+  const card = document.getElementById('ytConnectCard');
+  if (!card) return;
+  card.style.display = 'flex';
+  if (!youtubeState.has_client_secret) {
+    card.innerHTML = `
+      <span class="yt-dot">📺 <strong>Post shorts straight to YouTube.</strong> One-time Google setup needed first —
+      open <strong>YOUTUBE_SETUP.md</strong> in the Shorts Maker folder for the step-by-step guide.</span>`;
+  } else if (!youtubeState.connected) {
+    card.innerHTML = `
+      <span class="yt-dot">📺 <strong>Connect your YouTube account</strong> to post shorts with one click.</span>
+      <button class="yt-btn" id="ytConnectBtn" onclick="connectYouTube()">Connect YouTube</button>`;
+  } else {
+    card.innerHTML = `
+      <span class="yt-dot">✅ <strong>YouTube connected.</strong> Use “Post to YouTube” on any short below.</span>
+      <button onclick="disconnectYouTube()">Disconnect</button>`;
+  }
+}
+
+async function connectYouTube() {
+  const btn = document.getElementById('ytConnectBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Check your browser…'; }
+  try {
+    const res = await fetch('/api/youtube/connect', {method: 'POST'});
+    const data = await res.json();
+    if (data.error) { alert(data.error); }
+    youtubeState = {has_client_secret: true, connected: !!data.connected};
+  } catch (e) {
+    alert('Could not connect: ' + e);
+  }
+  renderYtConnectCard();
+}
+
+async function disconnectYouTube() {
+  if (!confirm('Disconnect your YouTube account? You can reconnect any time.')) return;
+  try {
+    const res = await fetch('/api/youtube/disconnect', {method: 'POST'});
+    youtubeState = await res.json();
+  } catch (e) {}
+  renderYtConnectCard();
+}
+
+// Posts an already-made short. `statusEl` is where progress/result is shown.
+async function postToYouTube(filename, statusEl, btn) {
+  if (!youtubeState.connected) {
+    await refreshYouTubeState();
+    if (!youtubeState.connected) {
+      statusEl.className = 'yt-status err';
+      statusEl.innerHTML = youtubeState.has_client_secret
+        ? 'Connect your YouTube account first (button at the top of the History tab).'
+        : 'Finish the one-time Google setup first — see YOUTUBE_SETUP.md in the app folder.';
+      if (youtubeState.connected === false && youtubeState.has_client_secret) showTab('history');
+      return;
+    }
+  }
+  if (!confirm('Post this short to your YouTube channel?\n\nA title and description are written for you automatically.\nHeads-up: until your app passes Google’s one-time review, YouTube keeps API uploads set to Private.')) return;
+
+  if (btn) btn.disabled = true;
+  statusEl.className = 'yt-status';
+  statusEl.innerHTML = '<span class="spinner"></span>Uploading to YouTube…';
+  try {
+    const res = await fetch('/api/youtube/post', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename})
+    });
+    const data = await res.json();
+    if (data.error) {
+      statusEl.className = 'yt-status err';
+      statusEl.textContent = data.error;
+      if (btn) btn.disabled = false;
+      return;
+    }
+    const isPrivate = data.privacy_status === 'private';
+    const privacyLine = isPrivate
+      ? `Uploaded as <strong>Private</strong> (Google hasn’t reviewed the app yet). Open it in Studio to review it.`
+      : `Uploaded as <strong>${data.privacy_status}</strong>. 🎉`;
+    const thumbLine = data.thumbnail_set ? '' : '<br><span style="color:var(--muted)">(Thumbnail needs a phone-verified channel — video posted without it.)</span>';
+    statusEl.className = 'yt-status';
+    statusEl.innerHTML = `✅ ${privacyLine}${thumbLine}<br>
+      <a href="${data.studio_url}" target="_blank" rel="noopener">Open in YouTube Studio ↗</a>`;
+    if (btn) { btn.textContent = 'Posted ✓'; }
+  } catch (e) {
+    statusEl.className = 'yt-status err';
+    statusEl.textContent = 'Something went wrong posting to YouTube: ' + e;
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function loadHistory() {
+  refreshYouTubeState();
   const res = await fetch('/api/history');
   const data = await res.json();
 
@@ -519,6 +652,21 @@ function renderGeneratedEntry(g, container) {
     g.generated_at ? new Date(g.generated_at).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'}) : 'Unknown date';
 
   const actions = body.querySelector('.short-actions');
+  actions.style.flexDirection = 'column';
+  actions.style.alignItems = 'stretch';
+
+  const ytStatus = document.createElement('div');
+  ytStatus.className = 'yt-status';
+  ytStatus.style.display = 'none';
+
+  const ytBtn = document.createElement('button');
+  ytBtn.className = 'yt-btn';
+  ytBtn.innerHTML = '▶ Post to YouTube';
+  ytBtn.onclick = () => { ytStatus.style.display = 'block'; postToYouTube(g.filename, ytStatus, ytBtn); };
+  actions.appendChild(ytBtn);
+
+  const row = document.createElement('div');
+  row.className = 'action-row';
   const link = document.createElement('a');
   link.className = 'download';
   link.href = g.url;
@@ -527,14 +675,16 @@ function renderGeneratedEntry(g, container) {
   dlBtn.className = 'secondary';
   dlBtn.textContent = 'Download';
   link.appendChild(dlBtn);
-  actions.appendChild(link);
+  row.appendChild(link);
 
   const delBtn = document.createElement('button');
   delBtn.className = 'del-btn';
   delBtn.title = 'Delete this short';
   delBtn.textContent = '🗑';
   delBtn.onclick = () => deleteShort(g, card);
-  actions.appendChild(delBtn);
+  row.appendChild(delBtn);
+  actions.appendChild(row);
+  actions.appendChild(ytStatus);
 
   card.appendChild(body);
   container.appendChild(card);
@@ -616,19 +766,18 @@ async function generate(domKey) {
       statusEl.innerHTML = '<p class="error">' + data.error + '</p>';
       return;
     }
-    let thumbBlock = '';
-    if (data.thumbnail_url) {
-      thumbBlock = `
-        <p class="hint" style="margin-top:14px"><strong>Suggested thumbnail</strong> (upload this as your Short's cover):</p>
-        <img class="thumb-preview" src="${data.thumbnail_url}" alt="thumbnail">
-        <a class="download" href="${data.thumbnail_url}" download="${data.thumbnail_url.split('/').pop()}"><button class="secondary">Download thumbnail</button></a>`;
-    }
     statusEl.innerHTML = `
       <video controls src="${data.url}"></video>
-      <a class="download" href="${data.url}" download="${data.filename}"><button class="secondary">Download short</button></a>
-      ${thumbBlock}
+      <div class="short-actions" style="max-width:300px;flex-direction:column;align-items:stretch;">
+        <button class="yt-btn" id="ytBtn-${domKey}">▶ Post to YouTube</button>
+        <a class="download" href="${data.url}" download="${data.filename}"><button class="secondary" style="width:100%">Download short</button></a>
+        <div class="yt-status" id="ytStatus-${domKey}" style="display:none"></div>
+      </div>
       <p class="hint">Also saved under the History tab.</p>
     `;
+    const ytBtn = document.getElementById('ytBtn-' + domKey);
+    const ytStatus = document.getElementById('ytStatus-' + domKey);
+    ytBtn.onclick = () => { ytStatus.style.display = 'block'; postToYouTube(data.filename, ytStatus, ytBtn); };
   } catch (e) {
     statusEl.innerHTML = '<p class="error">Something went wrong: ' + e + '</p>';
   }

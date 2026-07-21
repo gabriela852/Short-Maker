@@ -9,7 +9,7 @@ from dotenv import load_dotenv, set_key
 from flask import Flask, jsonify, request, send_from_directory
 from send2trash import send2trash
 
-from engine import download, rank, clip, framing
+from engine import download, rank, clip, framing, youtube
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
@@ -336,6 +336,84 @@ def delete_short():
     return jsonify({"ok": True})
 
 
+@app.route("/api/youtube/status", methods=["GET"])
+def youtube_status():
+    """Tells the UI whether the one-time Google setup is done and whether her
+    account is connected, so it can show the right button."""
+    return jsonify(youtube.status())
+
+
+@app.route("/api/youtube/connect", methods=["POST"])
+def youtube_connect():
+    """Runs the one-time sign-in. This opens her browser and blocks until she
+    grants access, so the server must be threaded (see app.run below)."""
+    try:
+        return jsonify(youtube.connect())
+    except youtube.YouTubeError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/youtube/disconnect", methods=["POST"])
+def youtube_disconnect():
+    youtube.disconnect()
+    return jsonify(youtube.status())
+
+
+@app.route("/api/youtube/post", methods=["POST"])
+def youtube_post():
+    """Posts an already-made short to her channel: writes a title/description,
+    then uploads the video and its thumbnail."""
+    data = request.get_json(force=True)
+    filename = os.path.basename((data.get("filename") or "").strip())
+    privacy = data.get("privacy", "public")
+    if not filename:
+        return jsonify({"error": "No short specified."}), 400
+
+    # Path safety: the target must stay inside OUTPUT_DIR.
+    video_path = os.path.abspath(os.path.join(OUTPUT_DIR, filename))
+    if os.path.commonpath([video_path, os.path.abspath(OUTPUT_DIR)]) != os.path.abspath(OUTPUT_DIR):
+        return jsonify({"error": "Invalid file path."}), 400
+    if not os.path.isfile(video_path):
+        return jsonify({"error": "That short isn't on this computer anymore."}), 400
+
+    # The sidecar holds the title/reason/source and the real thumbnail name.
+    sidecar = {}
+    sidecar_path = os.path.join(OUTPUT_DIR, os.path.splitext(filename)[0] + ".json")
+    try:
+        with open(sidecar_path, "r", encoding="utf-8") as f:
+            sidecar = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    thumb_name = sidecar.get("thumbnail_filename")
+    thumbnail_path = os.path.join(OUTPUT_DIR, thumb_name) if thumb_name else None
+    if thumbnail_path and not os.path.isfile(thumbnail_path):
+        thumbnail_path = None
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    title, description = youtube.write_metadata(
+        sidecar.get("candidate_title", ""),
+        sidecar.get("reason", ""),
+        sidecar.get("source_title", ""),
+        api_key,
+    )
+
+    try:
+        result = youtube.upload_short(video_path, thumbnail_path, title, description, privacy)
+    except youtube.YouTubeError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+    result["title"] = title
+    result["description"] = description
+    return jsonify(result)
+
+
 @app.route("/api/file/<path:filename>")
 def get_file(filename):
     return send_from_directory(OUTPUT_DIR, filename)
@@ -347,4 +425,6 @@ def get_preview_file(filename):
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5050, debug=False)
+    # threaded=True so the blocking "Connect YouTube" sign-in doesn't freeze
+    # the rest of the app while her browser is open.
+    app.run(host="127.0.0.1", port=5050, debug=False, threaded=True)

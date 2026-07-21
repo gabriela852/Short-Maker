@@ -7,3 +7,7 @@ data/outputs/
 data/work/
 data/analyses/
 .claude/
+# YouTube: private Google credentials — never commit these
+client_secret.json
+client_secrets.json
+data/youtube_token.json
