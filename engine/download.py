@@ -31,13 +31,33 @@ def fetch_source(url, progress_hook=None):
     return fetch_video(url, progress_hook=progress_hook)
 
 
+def _caption_token_count(path):
+    """Rough count of separately-timed text segments in a json3 caption file.
+    A high count means the track has real per-word timings (auto-generated
+    captions); a low count means each cue is a whole sentence or line (a
+    manual/uploaded track). We use this to prefer the finer-grained track."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return 0
+    count = 0
+    for event in data.get("events", []):
+        for seg in event.get("segs", []):
+            if seg.get("utf8", "").strip():
+                count += 1
+    return count
+
+
 def _resolve_local_files(video_id):
     """Finds the already-downloaded video file and its caption file for a
     video_id, purely by looking at what's on disk in DOWNLOAD_DIR. Returns
-    (video_path, caption_path) - either may be None if missing. Uses sorted()
-    so caption selection is deterministic even when multiple lang variants
-    exist (e.g. "<id>.en.json3" and "<id>.en-orig.json3") - directory
-    enumeration order isn't guaranteed, especially on Windows/NTFS."""
+    (video_path, caption_path) - either may be None if missing. When several
+    caption tracks exist (e.g. "<id>.en.json3", "<id>.en-orig.json3",
+    "<id>.en-US.json3"), we pick the one with the finest (word-level) timing
+    rather than the alphabetically-first one - a manual "en-US" track often
+    sorts first but carries only whole-sentence cues, which makes captions
+    render as huge multi-line blocks instead of a few words at a time."""
     video_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
     if not os.path.isfile(video_path):
         candidates = sorted(glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*")))
@@ -50,7 +70,9 @@ def _resolve_local_files(video_id):
     caption_path = None
     caption_candidates = sorted(glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*.json3")))
     if caption_candidates:
-        caption_path = caption_candidates[0]
+        # Prefer the word-level track (most separately-timed segments). Ties keep
+        # the alphabetically-first file, so selection stays deterministic.
+        caption_path = max(caption_candidates, key=_caption_token_count)
 
     return video_path, caption_path
 
@@ -289,4 +311,22 @@ def _parse_json3_captions(path):
         if text.strip() == "":
             continue
         cleaned.append({"start": w["start"], "end": w["end"], "text": text})
-    return cleaned
+
+    # Safety net for manual/uploaded caption tracks that time a whole sentence as
+    # one segment: split any multi-word segment into individual words with evenly
+    # interpolated timing, so captions still show a few words at a time instead of
+    # dumping a full sentence (or several) on screen at once. Word-level tracks are
+    # already one word per segment, so this leaves them untouched.
+    expanded = []
+    for w in cleaned:
+        parts = w["text"].split()
+        if len(parts) <= 1:
+            expanded.append(w)
+            continue
+        span = max(0.0, w["end"] - w["start"])
+        per = span / len(parts) if span > 0 else 0.0
+        for i, part in enumerate(parts):
+            ws = w["start"] + per * i
+            we = w["start"] + per * (i + 1) if per > 0 else w["end"]
+            expanded.append({"start": ws, "end": we, "text": part})
+    return expanded
