@@ -5,6 +5,17 @@ up themselves."""
 import shutil
 import glob
 import os
+import subprocess
+
+# On Windows, launching a console program like ffmpeg pops up its own black
+# console window every time - which flashes on screen as the user clicks around
+# (previews, "Start earlier/later", "Make this short"). Passing this flag when we
+# spawn ffmpeg keeps that window hidden. Import SUBPROCESS_FLAGS and pass it as
+# creationflags= on every subprocess call that launches ffmpeg.
+if os.name == "nt":
+    SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW
+else:
+    SUBPROCESS_FLAGS = 0
 
 _FFMPEG_GLOB = os.path.expandvars(
     r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg*\ffmpeg-*-full_build\bin"

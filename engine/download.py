@@ -12,7 +12,7 @@ import urllib.request
 
 import yt_dlp
 
-from .ffmpeg_util import FFMPEG
+from .ffmpeg_util import FFMPEG, SUBPROCESS_FLAGS
 
 DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "downloads")
 
@@ -253,7 +253,7 @@ def fetch_descript_video(url, progress_hook=None):
     elif stream_url:
         result = subprocess.run(
             [FFMPEG, "-y", "-i", stream_url, "-c", "copy", video_path],
-            capture_output=True, text=True,
+            capture_output=True, text=True, creationflags=SUBPROCESS_FLAGS,
         )
         if result.returncode != 0:
             raise RuntimeError(f"Couldn't download the Descript video:\n{result.stderr[-1500:]}")

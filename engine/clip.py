@@ -6,7 +6,7 @@ import subprocess
 import time
 import uuid
 
-from .ffmpeg_util import FFMPEG
+from .ffmpeg_util import FFMPEG, SUBPROCESS_FLAGS
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "outputs")
 WORK_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "work")
@@ -174,7 +174,7 @@ def make_short(video_path, words, start, end, output_name=None, framing=None, cr
         output_path,
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, creationflags=SUBPROCESS_FLAGS)
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg failed:\n{result.stderr[-3000:]}")
 
@@ -208,7 +208,7 @@ def make_preview_frame(video_path, words, start, end, timestamp=None, framing=No
         "-q:v", "3", output_path,
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, creationflags=SUBPROCESS_FLAGS)
     try:
         os.remove(srt_path)
     except OSError:
@@ -282,7 +282,7 @@ def make_thumbnail(video_path, words, start, end, thumb_time, framing=None,
         "-q:v", "2", output_path,
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, creationflags=SUBPROCESS_FLAGS)
     try:
         os.remove(srt_path)
     except OSError:
