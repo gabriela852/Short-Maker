@@ -413,7 +413,7 @@ async function postToYouTube(filename, statusEl, btn) {
       return;
     }
   }
-  if (!confirm('Post this short to your YouTube channel?\n\nA title and description are written for you automatically.\nHeads-up: until your app passes Google’s one-time review, YouTube keeps API uploads set to Private.')) return;
+  if (!confirm('Post this short to your YouTube channel?\n\nA title and description are written for you automatically.\n\nHeads-up: until Google finishes its one-time review of your app, your posts stay Private — only you can see them. You can make them public after that review.')) return;
 
   if (btn) btn.disabled = true;
   statusEl.className = 'yt-status';

@@ -17,6 +17,7 @@ How the Google side works (why the UI says what it says):
 We ask for the narrowest scope that works: youtube.upload covers both the video
 upload and setting its thumbnail.
 """
+import glob
 import json
 import os
 
@@ -30,12 +31,10 @@ from googleapiclient.http import MediaFileUpload
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# The client_secret.json she downloads from Google Cloud goes in the project
-# root. We accept either name Google might hand out.
-_CLIENT_SECRET_CANDIDATES = [
-    os.path.join(BASE_DIR, "client_secret.json"),
-    os.path.join(BASE_DIR, "client_secrets.json"),
-]
+# The credentials file she downloads from Google Cloud goes in the project
+# root. Google names it something long like
+# "client_secret_1234-abcd.apps.googleusercontent.com.json", so we accept ANY
+# file starting with "client_secret" - no renaming required on her part.
 TOKEN_PATH = os.path.join(BASE_DIR, "data", "youtube_token.json")
 
 # youtube.upload = upload videos and set their thumbnails. Nothing more.
@@ -56,10 +55,12 @@ class YouTubeError(Exception):
 
 
 def _client_secret_path():
-    for path in _CLIENT_SECRET_CANDIDATES:
-        if os.path.isfile(path):
-            return path
-    return None
+    # Prefer the tidy name if it's there, otherwise take whatever Google named it.
+    exact = os.path.join(BASE_DIR, "client_secret.json")
+    if os.path.isfile(exact):
+        return exact
+    matches = sorted(glob.glob(os.path.join(BASE_DIR, "client_secret*.json")))
+    return matches[0] if matches else None
 
 
 def has_client_secret():
@@ -161,7 +162,7 @@ WRITE_METADATA_TOOL = {
             },
             "description": {
                 "type": "string",
-                "description": "One or two sentences that tease the clip and make people want to watch, followed by a blank line and 3-5 relevant lowercase hashtags. Do not use quotation marks.",
+                "description": "One or two sentences that tease the clip and make people want to watch. Do not use quotation marks. Do NOT include any hashtags.",
             },
         },
         "required": ["title", "description"],
@@ -177,8 +178,7 @@ Use the write_metadata tool to report your answer."""
 
 def _fallback_metadata(candidate_title, reason):
     title = (candidate_title or "Watch this").strip()[:100]
-    body = (reason or "").strip()
-    description = (body + "\n\n#shorts").strip() if body else "#shorts"
+    description = (reason or "").strip()
     return title, description
 
 
@@ -207,8 +207,6 @@ def write_metadata(candidate_title, reason, source_title, api_key):
             if block.type == "tool_use" and block.name == "write_metadata":
                 title = (block.input.get("title") or candidate_title or "Watch this").strip()[:100]
                 description = (block.input.get("description") or "").strip()
-                if "#short" not in description.lower():
-                    description = (description + "\n\n#shorts").strip()
                 return title, description
     except Exception:
         pass
