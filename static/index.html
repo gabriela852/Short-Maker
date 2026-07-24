@@ -191,6 +191,28 @@
   .yt-status { font-size: 12px; margin-top: 8px; line-height: 1.4; }
   .yt-status a { color: var(--navy); font-weight: 600; }
   .yt-status.err { color: #b00020; }
+  /* Public / Private chooser shown when Post to YouTube is clicked */
+  .yt-choose {
+    background: #fff; border: 1px solid #e6dfd0; border-radius: 10px;
+    padding: 10px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .yt-choose-label { font-weight: 600; color: var(--navy); font-size: 12px; }
+  .yt-choose-btns { display: flex; gap: 8px; }
+  .yt-choose-btns .yt-choice {
+    margin-top: 0; flex: 1; padding: 8px 6px; font-size: 12px; line-height: 1.25;
+    border-radius: 8px; cursor: pointer; border: 1px solid transparent;
+    display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center;
+  }
+  .yt-choice small { font-weight: 400; font-size: 10px; opacity: 0.85; }
+  .yt-choice.pub { background: #c4302b; color: #fff; }
+  .yt-choice.pub:hover { background: #a82722; opacity: 1; }
+  .yt-choice.priv { background: #fff; color: var(--navy); border-color: #cfd8e3; }
+  .yt-choice.priv:hover { background: #f2f5f9; opacity: 1; }
+  .yt-cancel {
+    margin-top: 0; align-self: flex-start; background: none; color: var(--muted);
+    padding: 2px 4px; font-size: 11px; text-decoration: underline;
+  }
+  .yt-cancel:hover { color: var(--navy); background: none; opacity: 1; }
   .yt-connect-card { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .yt-connect-card .yt-dot { font-size: 14px; color: var(--muted); flex: 1; min-width: 200px; }
   .yt-connect-card button { margin-top: 0; }
@@ -400,29 +422,49 @@ async function disconnectYouTube() {
   renderYtConnectCard();
 }
 
-// Posts an already-made short. `statusEl` is where progress/result is shown.
-async function postToYouTube(filename, statusEl, btn) {
+// Clicking "Post to YouTube" opens this chooser so she decides Public vs Private
+// per post, right in the moment. Each choice calls postToYouTube with that privacy.
+async function promptPost(filename, statusEl, btn) {
+  // Make sure the account is connected before offering the choice.
   if (!youtubeState.connected) {
     await refreshYouTubeState();
     if (!youtubeState.connected) {
+      statusEl.style.display = 'block';
       statusEl.className = 'yt-status err';
       statusEl.innerHTML = youtubeState.has_client_secret
         ? 'Connect your YouTube account first (button at the top of the History tab).'
         : 'Finish the one-time Google setup first — see YOUTUBE_SETUP.md in the app folder.';
-      if (youtubeState.connected === false && youtubeState.has_client_secret) showTab('history');
+      if (youtubeState.has_client_secret) showTab('history');
       return;
     }
   }
-  if (!confirm('Post this short to your YouTube channel?\n\nA title and description are written for you automatically.\n\nHeads-up: until Google finishes its one-time review of your app, your posts stay Private — only you can see them. You can make them public after that review.')) return;
+  statusEl.style.display = 'block';
+  statusEl.className = 'yt-status';
+  statusEl.innerHTML = `
+    <div class="yt-choose">
+      <span class="yt-choose-label">Post to YouTube as…</span>
+      <div class="yt-choose-btns">
+        <button type="button" class="yt-choice pub">🌎 Public<small>Anyone can see it</small></button>
+        <button type="button" class="yt-choice priv">🔒 Private<small>Only you can see it</small></button>
+      </div>
+      <button type="button" class="yt-cancel">Cancel</button>
+    </div>`;
+  statusEl.querySelector('.pub').onclick = () => postToYouTube(filename, statusEl, btn, 'public');
+  statusEl.querySelector('.priv').onclick = () => postToYouTube(filename, statusEl, btn, 'private');
+  statusEl.querySelector('.yt-cancel').onclick = () => { statusEl.style.display = 'none'; statusEl.innerHTML = ''; };
+}
 
+// Posts an already-made short with the chosen privacy ('public' or 'private').
+// `statusEl` is where progress/result is shown.
+async function postToYouTube(filename, statusEl, btn, privacy) {
   if (btn) btn.disabled = true;
   statusEl.className = 'yt-status';
-  statusEl.innerHTML = '<span class="spinner"></span>Uploading to YouTube…';
+  statusEl.innerHTML = `<span class="spinner"></span>Uploading to YouTube as ${privacy === 'private' ? 'Private' : 'Public'}…`;
   try {
     const res = await fetch('/api/youtube/post', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({filename})
+      body: JSON.stringify({filename, privacy})
     });
     const data = await res.json();
     if (data.error) {
@@ -432,9 +474,15 @@ async function postToYouTube(filename, statusEl, btn) {
       return;
     }
     const isPrivate = data.privacy_status === 'private';
-    const privacyLine = isPrivate
+    // Private can mean two very different things: she chose it, or Google forced
+    // it because the app isn't reviewed yet. Only show the "review" note when she
+    // actually asked for Public but got Private back.
+    const forcedPrivate = isPrivate && data.requested_privacy !== 'private';
+    const privacyLine = forcedPrivate
       ? `Uploaded as <strong>Private</strong> (Google hasn’t reviewed the app yet). Open it in Studio to review it.`
-      : `Uploaded as <strong>${data.privacy_status}</strong>. 🎉`;
+      : isPrivate
+        ? `Uploaded as <strong>Private</strong> — only you can see it. Open it in Studio to make it public whenever you're ready.`
+        : `Uploaded as <strong>${data.privacy_status}</strong>. 🎉`;
     const thumbLine = data.thumbnail_set ? '' : '<br><span style="color:var(--muted)">(Thumbnail needs a phone-verified channel — video posted without it.)</span>';
     statusEl.className = 'yt-status';
     statusEl.innerHTML = `✅ ${privacyLine}${thumbLine}<br>
@@ -662,7 +710,7 @@ function renderGeneratedEntry(g, container) {
   const ytBtn = document.createElement('button');
   ytBtn.className = 'yt-btn';
   ytBtn.innerHTML = '▶ Post to YouTube';
-  ytBtn.onclick = () => { ytStatus.style.display = 'block'; postToYouTube(g.filename, ytStatus, ytBtn); };
+  ytBtn.onclick = () => { ytStatus.style.display = 'block'; promptPost(g.filename, ytStatus, ytBtn); };
   actions.appendChild(ytBtn);
 
   const row = document.createElement('div');
@@ -777,7 +825,7 @@ async function generate(domKey) {
     `;
     const ytBtn = document.getElementById('ytBtn-' + domKey);
     const ytStatus = document.getElementById('ytStatus-' + domKey);
-    ytBtn.onclick = () => { ytStatus.style.display = 'block'; postToYouTube(data.filename, ytStatus, ytBtn); };
+    ytBtn.onclick = () => { ytStatus.style.display = 'block'; promptPost(data.filename, ytStatus, ytBtn); };
   } catch (e) {
     statusEl.innerHTML = '<p class="error">Something went wrong: ' + e + '</p>';
   }
