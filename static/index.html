@@ -191,23 +191,38 @@
   .yt-status { font-size: 12px; margin-top: 8px; line-height: 1.4; }
   .yt-status a { color: var(--navy); font-weight: 600; }
   .yt-status.err { color: #b00020; }
-  /* Public / Private chooser shown when Post to YouTube is clicked */
+  /* Public / Unlisted / Private chooser shown when Post to YouTube is clicked */
   .yt-choose {
     background: #fff; border: 1px solid #e6dfd0; border-radius: 10px;
     padding: 10px; display: flex; flex-direction: column; gap: 8px;
   }
   .yt-choose-label { font-weight: 600; color: var(--navy); font-size: 12px; }
-  .yt-choose-btns { display: flex; gap: 8px; }
+  .yt-choose-btns { display: flex; flex-direction: column; gap: 8px; }
   .yt-choose-btns .yt-choice {
-    margin-top: 0; flex: 1; padding: 8px 6px; font-size: 12px; line-height: 1.25;
+    margin-top: 0; width: 100%; padding: 8px 10px; font-size: 12px; line-height: 1.3;
     border-radius: 8px; cursor: pointer; border: 1px solid transparent;
-    display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
   }
   .yt-choice small { font-weight: 400; font-size: 10px; opacity: 0.85; }
   .yt-choice.pub { background: #c4302b; color: #fff; }
   .yt-choice.pub:hover { background: #a82722; opacity: 1; }
+  .yt-choice.unlist { background: #fff; color: var(--navy); border-color: #2f6f4f; }
+  .yt-choice.unlist:hover { background: #eef6f1; opacity: 1; }
   .yt-choice.priv { background: #fff; color: var(--navy); border-color: #cfd8e3; }
   .yt-choice.priv:hover { background: #f2f5f9; opacity: 1; }
+  /* Shareable link shown after a successful post */
+  .yt-share {
+    margin-top: 8px; background: #f7f4ec; border: 1px solid #e6dfd0;
+    border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px;
+  }
+  .yt-share-label { font-weight: 600; color: var(--navy); font-size: 11px; }
+  .yt-share-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .yt-share-row a { word-break: break-all; }
+  .yt-copy {
+    margin-top: 0; padding: 3px 10px; font-size: 11px; border-radius: 6px;
+    background: var(--navy); color: #fff; cursor: pointer; flex-shrink: 0;
+  }
+  .yt-copy:hover { opacity: 0.9; }
   .yt-cancel {
     margin-top: 0; align-self: flex-start; background: none; color: var(--muted);
     padding: 2px 4px; font-size: 11px; text-decoration: underline;
@@ -444,12 +459,14 @@ async function promptPost(filename, statusEl, btn) {
     <div class="yt-choose">
       <span class="yt-choose-label">Post to YouTube as…</span>
       <div class="yt-choose-btns">
-        <button type="button" class="yt-choice pub">🌎 Public<small>Anyone can see it</small></button>
-        <button type="button" class="yt-choice priv">🔒 Private<small>Only you can see it</small></button>
+        <button type="button" class="yt-choice pub">🌎 Public<small>Anyone can find & watch it — shows on your channel</small></button>
+        <button type="button" class="yt-choice unlist">🔗 Unlisted<small>Hidden from your channel, but anyone with the link can watch — best for sharing privately</small></button>
+        <button type="button" class="yt-choice priv">🔒 Private<small>Only you can watch it (a shared link won't work for others)</small></button>
       </div>
       <button type="button" class="yt-cancel">Cancel</button>
     </div>`;
   statusEl.querySelector('.pub').onclick = () => postToYouTube(filename, statusEl, btn, 'public');
+  statusEl.querySelector('.unlist').onclick = () => postToYouTube(filename, statusEl, btn, 'unlisted');
   statusEl.querySelector('.priv').onclick = () => postToYouTube(filename, statusEl, btn, 'private');
   statusEl.querySelector('.yt-cancel').onclick = () => { statusEl.style.display = 'none'; statusEl.innerHTML = ''; };
 }
@@ -458,8 +475,9 @@ async function promptPost(filename, statusEl, btn) {
 // `statusEl` is where progress/result is shown.
 async function postToYouTube(filename, statusEl, btn, privacy) {
   if (btn) btn.disabled = true;
+  const uploadingLabel = {public: 'Public', unlisted: 'Unlisted', private: 'Private'}[privacy] || 'Public';
   statusEl.className = 'yt-status';
-  statusEl.innerHTML = `<span class="spinner"></span>Uploading to YouTube as ${privacy === 'private' ? 'Private' : 'Public'}…`;
+  statusEl.innerHTML = `<span class="spinner"></span>Uploading to YouTube as ${uploadingLabel}…`;
   try {
     const res = await fetch('/api/youtube/post', {
       method: 'POST',
@@ -473,20 +491,43 @@ async function postToYouTube(filename, statusEl, btn, privacy) {
       if (btn) btn.disabled = false;
       return;
     }
-    const isPrivate = data.privacy_status === 'private';
-    // Private can mean two very different things: she chose it, or Google forced
-    // it because the app isn't reviewed yet. Only show the "review" note when she
-    // actually asked for Public but got Private back.
-    const forcedPrivate = isPrivate && data.requested_privacy !== 'private';
-    const privacyLine = forcedPrivate
-      ? `Uploaded as <strong>Private</strong> (Google hasn’t reviewed the app yet). Open it in Studio to review it.`
-      : isPrivate
-        ? `Uploaded as <strong>Private</strong> — only you can see it. Open it in Studio to make it public whenever you're ready.`
-        : `Uploaded as <strong>${data.privacy_status}</strong>. 🎉`;
+    const status = data.privacy_status;
+    // Private can mean two different things: she chose it, or Google forced it
+    // because the app isn't reviewed yet. Only show the "review" note when she
+    // asked for something more open (Public/Unlisted) but got Private back.
+    const forcedPrivate = status === 'private' && data.requested_privacy !== 'private';
+    let privacyLine;
+    if (forcedPrivate) {
+      privacyLine = `Uploaded as <strong>Private</strong> (Google hasn’t reviewed the app yet, so it couldn’t post as ${data.requested_privacy}). Open it in Studio to review it.`;
+    } else if (status === 'private') {
+      privacyLine = `Uploaded as <strong>Private</strong> — only you can watch it. (A shared link won’t work for anyone else — pick <em>Unlisted</em> next time if you want to share by link.)`;
+    } else if (status === 'unlisted') {
+      privacyLine = `Uploaded as <strong>Unlisted</strong> — it won’t show on your channel, but anyone with the link below can watch. 🎉`;
+    } else {
+      privacyLine = `Uploaded as <strong>Public</strong>. 🎉`;
+    }
     const thumbLine = data.thumbnail_set ? '' : '<br><span style="color:var(--muted)">(Thumbnail needs a phone-verified channel — video posted without it.)</span>';
+    // Always surface the watch link. For a shareable post (Public/Unlisted) it's
+    // the link she sends people; for Private we label it honestly as her-only.
+    const canShare = status !== 'private';
+    const shareBlock = data.watch_url ? `
+      <div class="yt-share">
+        <span class="yt-share-label">${canShare ? '🔗 Share link:' : 'Your link (only opens for you while Private):'}</span>
+        <span class="yt-share-row">
+          <a href="${data.watch_url}" target="_blank" rel="noopener">${data.watch_url}</a>
+          <button type="button" class="yt-copy" data-link="${data.watch_url}">Copy</button>
+        </span>
+      </div>` : '';
     statusEl.className = 'yt-status';
-    statusEl.innerHTML = `✅ ${privacyLine}${thumbLine}<br>
-      <a href="${data.studio_url}" target="_blank" rel="noopener">Open in YouTube Studio ↗</a>`;
+    statusEl.innerHTML = `✅ ${privacyLine}${thumbLine}${shareBlock}
+      <div style="margin-top:6px"><a href="${data.studio_url}" target="_blank" rel="noopener">Open in YouTube Studio ↗</a></div>`;
+    const copyBtn = statusEl.querySelector('.yt-copy');
+    if (copyBtn) copyBtn.onclick = () => {
+      navigator.clipboard.writeText(copyBtn.dataset.link).then(() => {
+        copyBtn.textContent = 'Copied ✓';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+      }).catch(() => {});
+    };
     if (btn) { btn.textContent = 'Posted ✓'; }
   } catch (e) {
     statusEl.className = 'yt-status err';
