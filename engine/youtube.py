@@ -162,17 +162,30 @@ WRITE_METADATA_TOOL = {
             },
             "description": {
                 "type": "string",
-                "description": "One or two sentences that tease the clip and make people want to watch. Do not use quotation marks. Do NOT include any hashtags.",
+                "description": "One or two sentences in FIRST PERSON, written as the creator speaking directly to her own viewers (I / me / my) - the way she'd caption her own Short. Never describe the speaker in the third person ('She...', 'the creator...'). No quotation marks. No hashtags.",
             },
         },
         "required": ["title", "description"],
     },
 }
 
-METADATA_SYSTEM = """You write titles and descriptions for YouTube Shorts. You are given a working title \
-for a clip, a note on why the moment is engaging, and the name of the longer video it came from. Write a \
-title and description that would make someone scrolling their feed stop and watch. Keep the title tight and \
-curiosity-driving. Keep the description short and human - never clickbait that the clip doesn't deliver on. \
+METADATA_SYSTEM = """You ARE the creator of this YouTube Short, writing the title and description for your \
+OWN clip, in your OWN voice. The person speaking in the clip is you - so write as yourself, in the first \
+person.
+
+You are given a working title for the clip, a note on why the moment is engaging, and the name of the longer \
+video it came from.
+
+Write:
+- a tight, curiosity-driving title (the hook that makes someone stop scrolling and tap), and
+- a short description of one or two sentences, in the FIRST PERSON (I / me / my), speaking directly to your \
+viewers - warm, real, and human, the way you'd caption your own Short.
+
+Hard rules:
+- NEVER describe the speaker in the third person ("She...", "The creator...", "In this clip she..."). You are \
+the speaker - use "I", "me", "my".
+- No clickbait the clip doesn't deliver on. No quotation marks. No hashtags.
+
 Use the write_metadata tool to report your answer."""
 
 
