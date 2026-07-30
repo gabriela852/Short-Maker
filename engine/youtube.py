@@ -184,14 +184,31 @@ viewers - warm, real, and human, the way you'd caption your own Short.
 Hard rules:
 - NEVER describe the speaker in the third person ("She...", "The creator...", "In this clip she..."). You are \
 the speaker - use "I", "me", "my".
+- NEVER use em dashes or en dashes ("-" long dashes). They read as AI-written. Use commas, periods, or a \
+plain hyphen instead.
 - No clickbait the clip doesn't deliver on. No quotation marks. No hashtags.
 
 Use the write_metadata tool to report your answer."""
 
 
+def _strip_ai_dashes(text):
+    """Safety net so nothing published in Gabriela's voice contains an em/en
+    dash - a well-known tell of AI-written text she doesn't want. Converts any
+    that slip through into natural human punctuation (a comma), and tidies up
+    the spacing so we never leave a stray " ," or double space behind."""
+    if not text:
+        return text
+    for dash in ("—", "–"):  # em dash, en dash
+        text = text.replace(f" {dash} ", ", ").replace(dash, ", ")
+    # Collapse any artifacts the replacement may have created.
+    while "  " in text:
+        text = text.replace("  ", " ")
+    return text.replace(" ,", ",").replace(",,", ",").strip()
+
+
 def _fallback_metadata(candidate_title, reason):
-    title = (candidate_title or "Watch this").strip()[:100]
-    description = (reason or "").strip()
+    title = _strip_ai_dashes((candidate_title or "Watch this").strip())[:100]
+    description = _strip_ai_dashes((reason or "").strip())
     return title, description
 
 
@@ -218,8 +235,8 @@ def write_metadata(candidate_title, reason, source_title, api_key):
         )
         for block in resp.content:
             if block.type == "tool_use" and block.name == "write_metadata":
-                title = (block.input.get("title") or candidate_title or "Watch this").strip()[:100]
-                description = (block.input.get("description") or "").strip()
+                title = _strip_ai_dashes((block.input.get("title") or candidate_title or "Watch this").strip())[:100]
+                description = _strip_ai_dashes((block.input.get("description") or "").strip())
                 return title, description
     except Exception:
         pass
