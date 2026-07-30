@@ -153,6 +153,16 @@ def fetch_video(url, progress_hook=None):
 def _descript_slug(url):
     m = _DESCRIPT_SLUG_RE.search(url)
     if not m:
+        # A "web.descript.com/<id>/..." link is the Descript *editor* URL, not a
+        # shareable one - a very easy mix-up. Point the user at the Share button
+        # instead of the generic "doesn't look like a link" message.
+        if "web.descript.com" in url:
+            raise RuntimeError(
+                "That's the Descript editor link (web.descript.com). It only works "
+                "for you when you're signed in. In Descript, click Share (top right), "
+                "turn on 'Anyone with the link', and copy the "
+                "https://share.descript.com/view/... link - then paste that one here."
+            )
         raise RuntimeError(
             "That doesn't look like a Descript share link. Use a link like "
             "https://share.descript.com/view/XXXXXXXX"
@@ -209,6 +219,20 @@ def fetch_descript_video(url, progress_hook=None):
         raise RuntimeError(f"Couldn't reach Descript (error {e.code}). Try again in a moment.")
     except urllib.error.URLError:
         raise RuntimeError("Couldn't reach Descript - check your internet connection and try again.")
+
+    # If Descript is still rendering ("bouncing") the published video, its
+    # downloadable video + transcript files don't exist yet and every sub-URL
+    # 404s. That's not an expired link - it just isn't finished. Tell the truth,
+    # with progress, so the user knows to wait rather than thinking it's broken.
+    if (project.get("state") or "").lower() == "bouncing":
+        bp = project.get("bounce_progress") or {}
+        pct = bp.get("progress")
+        pct_str = f" (about {round(pct * 100)}% done)" if isinstance(pct, (int, float)) else ""
+        raise RuntimeError(
+            f"This Descript video is still finishing exporting on Descript's side{pct_str}. "
+            "Descript has to finish rendering it before it can be downloaded - give it a "
+            "couple of minutes, then paste the link and click 'Find the best moment' again."
+        )
 
     contents = project.get("contents") or {}
     media = contents.get("media") or {}
