@@ -23,7 +23,7 @@ PICK_SHORTS_TOOL = {
             "candidates": {
                 "type": "array",
                 "minItems": 1,
-                "maxItems": 4,
+                "maxItems": 6,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -63,7 +63,7 @@ You are given a transcript that has already been split into numbered segments, o
 [0] (00:00) Hey, how's it going?
 [1] (00:03) I just won a hackathon and I'm not a software engineer.
 
-Find the 3 best possible standalone clips. A great clip:
+Find the 6 best possible standalone clips. A great clip:
 - OPENS ON THE MOST SCROLL-STOPPING MOMENT of the clip - the single most shocking, beautiful, surprising, or \
 high-energy line you can find. This is the hook, and it MUST land in the very first second: viewers decide in 1-2 \
 seconds whether to keep watching, so never open on setup, context, or slow build-up. Start exactly where the energy \
@@ -76,8 +76,18 @@ genuinely impossible to follow without it, and keep any such lead-in to a single
 Report each clip as a range of segment indices: start_index (the first segment to include) through end_index (the last \
 segment to include, inclusive). Because you pick whole segments, clips will never start or end mid-sentence.
 
-Pick moments that are genuinely different from each other (don't pick three variations of the same beat). Use the \
-pick_shorts tool to report your answer."""
+Return 6 clips whenever the video can genuinely support that many. They MUST be distinct:
+- Their segment ranges must NOT overlap - no clip may share a segment with another clip.
+- Each must come from a different part or topic of the video. Never pick two variations of the same beat, the \
+same story, or the same line said twice.
+- Spread them across the whole video (beginning, middle, and end), not clustered in one stretch.
+
+Only return fewer than 6 if the video is genuinely too short or too repetitive to yield 6 strong, non-overlapping \
+clips - in that case return as many genuinely distinct ones as it truly supports, rather than padding with weak or \
+overlapping picks.
+
+List the clips in order of quality, your single strongest clip FIRST and weakest last (even though the clips \
+themselves come from different points across the video). Use the pick_shorts tool to report your answer."""
 
 
 def _format_timestamp(seconds):
@@ -103,7 +113,7 @@ def find_best_moments(words, api_key):
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=2000,
+        max_tokens=3500,
         system=SYSTEM_PROMPT,
         tools=[PICK_SHORTS_TOOL],
         tool_choice={"type": "tool", "name": "pick_shorts"},
@@ -118,11 +128,18 @@ def find_best_moments(words, api_key):
     for block in response.content:
         if block.type == "tool_use" and block.name == "pick_shorts":
             candidates = []
+            kept_ranges = []  # (i0, i1) of clips already kept, to guarantee distinctness
             for c in block.input["candidates"]:
                 i0 = max(0, min(int(c["start_index"]), n - 1))
                 i1 = max(0, min(int(c["end_index"]), n - 1))
                 if i1 < i0:
                     i0, i1 = i1, i0
+                # Distinctness guard: candidates arrive best-first, so if this one
+                # shares any segment with a clip we've already kept, drop it - the
+                # user wants 6 *distinct* shorts, not near-duplicates of one moment.
+                if any(i0 <= k1 and k0 <= i1 for k0, k1 in kept_ranges):
+                    continue
+                kept_ranges.append((i0, i1))
                 start = segments[i0]["start"]
                 end = segments[i1]["end"]
                 # Thumbnail: middle of the chosen segment, kept inside the clip.

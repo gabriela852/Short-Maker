@@ -29,7 +29,7 @@ transcript, not the video itself).
 
 1. Paste a link to one of **your own** YouTube videos.
 2. Click "Find the best moment" - this downloads the video and its captions,
-   then asks Claude to suggest 3 candidate clips with a reason for each.
+   then asks Claude to suggest up to 6 distinct candidate clips with a reason for each.
 3. Pick one and click "Make this short" - it cuts, reframes to vertical, and
    adds captions.
 4. Preview it right in the browser, then click Download.
