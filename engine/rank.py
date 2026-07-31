@@ -69,12 +69,21 @@ high-energy line you can find. This is the hook, and it MUST land in the very fi
 seconds whether to keep watching, so never open on setup, context, or slow build-up. Start exactly where the energy \
 peaks and let the clip play forward from there. Only include a lead-in segment before that peak if the moment is \
 genuinely impossible to follow without it, and keep any such lead-in to a single short segment.
+- STARTS AT THE BEGINNING OF A COMPLETE SENTENCE. The start_index segment must be the first word of a sentence, \
+never the middle of one. Read the segment's text: if it begins lowercase or picks up mid-thought (e.g. "allowed me \
+to make that move..."), it is NOT a valid opening - move the start to the segment where that sentence actually begins.
+- The opening sentence must be PUNCHY and stand on its own. It must NOT begin with a filler or connector word such \
+as "And", "But", "So", "Or", "Because", "Plus", or "Also" - those signal you have started mid-flow. Pick a segment \
+whose first word carries weight.
 - Is self-contained: a viewer who has never seen the full video can follow it without missing context.
-- Has a clear payoff, punchline, emotional peak, or "aha" moment, and ENDS on the segment that completes that thought.
+- Has a clear payoff, punchline, emotional peak, or "aha" moment. The end_index segment must FINISH that thought - \
+its text must end with a period, question mark, or exclamation. The last line must complete the idea; never end on a \
+segment that trails off or starts a brand-new thought that the clip won't finish.
 - Is roughly 25 to 60 seconds long (prefer 30-45s) - add up the segment durations to judge length.
 
 Report each clip as a range of segment indices: start_index (the first segment to include) through end_index (the last \
-segment to include, inclusive). Because you pick whole segments, clips will never start or end mid-sentence.
+segment to include, inclusive). Choose start_index so the clip opens on a full sentence, and end_index so it closes on \
+a finished thought.
 
 Return 6 clips whenever the video can genuinely support that many. They MUST be distinct:
 - Their segment ranges must NOT overlap - no clip may share a segment with another clip.
@@ -94,6 +103,127 @@ def _format_timestamp(seconds):
     m = int(seconds // 60)
     s = int(seconds % 60)
     return f"{m:02d}:{s:02d}"
+
+
+# --- Clean sentence boundaries -------------------------------------------------
+# A clip must OPEN on a full, punchy sentence (never mid-thought, never a filler
+# word) and CLOSE on a completed thought (never trailing into a new idea). The
+# prompt asks the model for this; these snap helpers enforce it as a safety net,
+# since the model can still hand back a ragged range.
+
+WEAK_OPENERS = {"and", "but", "so", "or", "because", "plus", "also", "yet"}
+
+
+def _ends_sentence(text):
+    """True if this segment finishes a thought (ends with sentence punctuation),
+    ignoring any trailing quote or bracket."""
+    t = (text or "").rstrip().rstrip('"”’)]')
+    return bool(t) and t[-1] in segment.SENTENCE_END
+
+
+def _first_word(text):
+    """The segment's first word, lowercased and stripped of surrounding
+    punctuation - used to reject weak opening connectors."""
+    t = (text or "").strip().lstrip('"“‘([')
+    parts = t.split()
+    return parts[0].strip(",.!?;:-—…").lower() if parts else ""
+
+
+# How far (in segments) a snap is allowed to travel looking for a clean sentence
+# boundary. Sentences are usually one segment, so a real boundary is always close.
+# If none is found within this window, we KEEP the model's original pick rather
+# than dragging the clip across the video - which is what would otherwise happen
+# on transcripts with little or no punctuation (e.g. YouTube auto-captions), where
+# forcing a boundary would collapse every clip to the whole video.
+_SNAP_WINDOW = 3
+
+
+def _starts_sentence(segments, i):
+    """A segment opens a sentence if it's the first one, or the segment before it
+    ended with sentence punctuation."""
+    return i == 0 or _ends_sentence(segments[i - 1]["text"])
+
+
+def _snap_start(segments, i, end):
+    """Return a clean opening segment: the start of the sentence `i` lands in, and
+    if that sentence opens on a weak filler word, the next sentence start instead.
+    Bounded by _SNAP_WINDOW so a punctuation-poor transcript keeps the original
+    pick instead of collapsing, and the weak-word skip never jumps past `end`
+    (which would shrink the clip to nothing)."""
+    n = len(segments)
+    orig = min(max(i, 0), n - 1)
+
+    # Walk back to the sentence start, but no further than the window.
+    j = orig
+    steps = 0
+    while j > 0 and not _starts_sentence(segments, j) and steps < _SNAP_WINDOW:
+        j -= 1
+        steps += 1
+    if not _starts_sentence(segments, j):
+        j = orig  # no real boundary nearby - keep the model's pick
+
+    # If it opens on a weak connector, try the next sentence start within the
+    # window, but only if that start still leaves room before the clip's end.
+    if _first_word(segments[j]["text"]) in WEAK_OPENERS:
+        k = j + 1
+        steps = 0
+        while k < n and not _starts_sentence(segments, k) and steps < _SNAP_WINDOW:
+            k += 1
+            steps += 1
+        # Only skip if it still leaves real clip after it (never collapse to one
+        # segment); otherwise keep this complete sentence even if it opens weakly.
+        if k < n and k < end and _starts_sentence(segments, k):
+            j = k
+    return j
+
+
+def _snap_end(segments, i, start):
+    """Return a segment that finishes a thought: the last sentence-ending segment
+    at or before `i` (not before `start`), else the next one after `i`. Bounded by
+    _SNAP_WINDOW; if no boundary is near, keep the model's original end."""
+    n = len(segments)
+    orig = min(max(i, start), n - 1)
+
+    j = orig
+    steps = 0
+    while j > start and not _ends_sentence(segments[j]["text"]) and steps < _SNAP_WINDOW:
+        j -= 1
+        steps += 1
+    if _ends_sentence(segments[j]["text"]) and j >= start:
+        return j
+
+    k = orig
+    steps = 0
+    while k < n and not _ends_sentence(segments[k]["text"]) and steps < _SNAP_WINDOW:
+        k += 1
+        steps += 1
+    if k < n and _ends_sentence(segments[k]["text"]):
+        return k
+
+    return orig  # no boundary nearby - keep the model's pick
+
+
+# A clip shorter than this is unusable as a Short (target is 25-60s). If snapping
+# ever leaves one this short (e.g. the end got pulled back onto the start), we
+# extend it forward to reach a viable length - see _extend_end_to_floor.
+_MIN_CLIP_SECONDS = 12
+
+
+def _extend_end_to_floor(segments, i0, i1, min_seconds):
+    """If the snapped clip is too short, advance the end to successive completed
+    thoughts (keeping a clean ending) until it reaches min_seconds or the
+    transcript runs out. Prevents a one-segment clip when the model's end trailed
+    off unpunctuated and the end snapped back onto the start."""
+    n = len(segments)
+    j = i1
+    while (segments[j]["end"] - segments[i0]["start"]) < min_seconds and j < n - 1:
+        k = j + 1
+        while k < n and not _ends_sentence(segments[k]["text"]):
+            k += 1
+        if k >= n:
+            break  # no further completed thought - keep the clean short clip
+        j = k
+    return j
 
 
 def find_best_moments(words, api_key):
@@ -134,6 +264,16 @@ def find_best_moments(words, api_key):
                 i1 = max(0, min(int(c["end_index"]), n - 1))
                 if i1 < i0:
                     i0, i1 = i1, i0
+                # Clean boundaries: open on a full, punchy sentence and close on a
+                # finished thought - even if the model handed back a ragged range.
+                # Bounded so punctuation-poor transcripts keep the original pick.
+                i0 = _snap_start(segments, i0, i1)
+                i1 = _snap_end(segments, i1, i0)
+                if i1 < i0:
+                    i1 = i0
+                # Never emit a clip too short to be a usable Short.
+                if segments[i1]["end"] - segments[i0]["start"] < _MIN_CLIP_SECONDS:
+                    i1 = _extend_end_to_floor(segments, i0, i1, _MIN_CLIP_SECONDS)
                 # Distinctness guard: candidates arrive best-first, so if this one
                 # shares any segment with a clip we've already kept, drop it - the
                 # user wants 6 *distinct* shorts, not near-duplicates of one moment.
