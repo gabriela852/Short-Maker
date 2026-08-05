@@ -266,6 +266,32 @@ def _save_generated_sidecar(filename, video_id, source_title, candidate_title, r
         json.dump(data, f)
 
 
+def _record_post(filename, result, title):
+    """Stamps a successful YouTube post onto the short's sidecar so History can
+    show what's already been posted (and stop her posting the same clip twice).
+    Read-modify-write so it never clobbers the clip's existing metadata, written
+    atomically like _save_analysis. Best-effort: the video is already live, so a
+    sidecar hiccup must never turn a successful post into a failure."""
+    sidecar_path = os.path.join(OUTPUT_DIR, os.path.splitext(filename)[0] + ".json")
+    try:
+        with open(sidecar_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        data = {"filename": filename}
+
+    data["posted_at"] = datetime.datetime.now().isoformat()
+    data["youtube_video_id"] = result.get("video_id")
+    data["youtube_url"] = result.get("watch_url")
+    data["posted_privacy"] = result.get("privacy_status")
+    data["posted_title"] = title
+    data["post_count"] = int(data.get("post_count", 0)) + 1
+
+    tmp_path = sidecar_path + f".{uuid.uuid4().hex[:8]}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.replace(tmp_path, sidecar_path)
+
+
 @app.route("/api/history")
 def history():
     analyses = []
@@ -408,6 +434,14 @@ def youtube_post():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+    # Remember that this short went out, so History can mark it as posted and
+    # she never accidentally posts the same clip twice again. The upload already
+    # succeeded, so never let a bookkeeping error surface as a failed post.
+    try:
+        _record_post(filename, result, title)
+    except Exception:
+        traceback.print_exc()
 
     result["title"] = title
     result["description"] = description

@@ -168,6 +168,23 @@
     font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 6px;
     pointer-events: none;
   }
+  /* "Posted to YouTube" markers so she can see at a glance what's already up */
+  .short-thumb .posted-flag {
+    position: absolute; right: 8px; top: 8px;
+    background: #2f6f4f; color: #fff;
+    font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3); pointer-events: none;
+  }
+  .short-card.is-posted { box-shadow: 0 0 0 2px #2f6f4f, 0 1px 4px rgba(0,0,0,0.08); }
+  .posted-note {
+    font-size: 12px; color: #2f6f4f; font-weight: 600; margin: 2px 0 0;
+    display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  }
+  .posted-note a { color: var(--navy); font-weight: 600; }
+  .short-actions .yt-btn.posted-again {
+    background: #fff; color: var(--navy); border: 1px solid #cfd8e3;
+  }
+  .short-actions .yt-btn.posted-again:hover { background: #f2f5f9; }
   .short-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
   .short-title { font-size: 13px; font-weight: 600; color: var(--text); margin: 0; line-height: 1.3; }
   .short-range, .short-date { font-size: 12px; color: var(--muted); margin: 0; display: flex; align-items: center; gap: 5px; }
@@ -439,7 +456,7 @@ async function disconnectYouTube() {
 
 // Clicking "Post to YouTube" opens this chooser so she decides Public vs Private
 // per post, right in the moment. Each choice calls postToYouTube with that privacy.
-async function promptPost(filename, statusEl, btn) {
+async function promptPost(filename, statusEl, btn, g, card) {
   // Make sure the account is connected before offering the choice.
   if (!youtubeState.connected) {
     await refreshYouTubeState();
@@ -465,15 +482,15 @@ async function promptPost(filename, statusEl, btn) {
       </div>
       <button type="button" class="yt-cancel">Cancel</button>
     </div>`;
-  statusEl.querySelector('.pub').onclick = () => postToYouTube(filename, statusEl, btn, 'public');
-  statusEl.querySelector('.unlist').onclick = () => postToYouTube(filename, statusEl, btn, 'unlisted');
-  statusEl.querySelector('.priv').onclick = () => postToYouTube(filename, statusEl, btn, 'private');
+  statusEl.querySelector('.pub').onclick = () => postToYouTube(filename, statusEl, btn, 'public', g, card);
+  statusEl.querySelector('.unlist').onclick = () => postToYouTube(filename, statusEl, btn, 'unlisted', g, card);
+  statusEl.querySelector('.priv').onclick = () => postToYouTube(filename, statusEl, btn, 'private', g, card);
   statusEl.querySelector('.yt-cancel').onclick = () => { statusEl.style.display = 'none'; statusEl.innerHTML = ''; };
 }
 
 // Posts an already-made short with the chosen privacy ('public' or 'private').
 // `statusEl` is where progress/result is shown.
-async function postToYouTube(filename, statusEl, btn, privacy) {
+async function postToYouTube(filename, statusEl, btn, privacy, g, card) {
   if (btn) btn.disabled = true;
   const uploadingLabel = {public: 'Public', unlisted: 'Unlisted', private: 'Private'}[privacy] || 'Public';
   statusEl.className = 'yt-status';
@@ -529,6 +546,17 @@ async function postToYouTube(filename, statusEl, btn, privacy) {
       }).catch(() => {});
     };
     if (btn) { btn.textContent = 'Posted ✓'; }
+
+    // Persist the "posted" look on this card right away, without a full reload
+    // (a reload would wipe the share link she may want to copy). The sidecar was
+    // updated server-side, so this just mirrors it in the page immediately.
+    if (g) {
+      g.posted_at = new Date().toISOString();
+      g.youtube_url = data.watch_url;
+      g.posted_privacy = status;
+      g.post_count = (g.post_count || 0) + 1;
+    }
+    if (card) markCardPosted(card, g);
   } catch (e) {
     statusEl.className = 'yt-status err';
     statusEl.textContent = 'Something went wrong posting to YouTube: ' + e;
@@ -713,6 +741,8 @@ function renderGeneratedEntry(g, container) {
   const card = document.createElement('div');
   card.className = 'short-card';
 
+  if (g.posted_at) card.classList.add('is-posted');
+
   const thumb = document.createElement('div');
   thumb.className = 'short-thumb';
   const videoEl = document.createElement('video');
@@ -725,6 +755,12 @@ function renderGeneratedEntry(g, container) {
   durChip.className = 'dur-chip';
   durChip.textContent = formatTime(Math.max(0, (g.end || 0) - (g.start || 0)));
   thumb.appendChild(durChip);
+  if (g.posted_at) {
+    const flag = document.createElement('span');
+    flag.className = 'posted-flag';
+    flag.textContent = '✓ Posted';
+    thumb.appendChild(flag);
+  }
   card.appendChild(thumb);
 
   const body = document.createElement('div');
@@ -748,10 +784,40 @@ function renderGeneratedEntry(g, container) {
   ytStatus.className = 'yt-status';
   ytStatus.style.display = 'none';
 
+  // If this short is already up on YouTube, say so clearly (with a watch link)
+  // so she never posts the same clip twice by accident again.
+  if (g.posted_at) {
+    const note = document.createElement('p');
+    note.className = 'posted-note';
+    const when = new Date(g.posted_at).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
+    const times = (g.post_count && g.post_count > 1) ? ` (${g.post_count}×)` : '';
+    const label = document.createElement('span');
+    label.textContent = `✓ Posted to YouTube on ${when}${times}`;
+    note.appendChild(label);
+    if (g.youtube_url) {
+      const watch = document.createElement('a');
+      watch.href = g.youtube_url;
+      watch.target = '_blank';
+      watch.rel = 'noopener';
+      watch.textContent = 'Watch ↗';
+      note.appendChild(watch);
+    }
+    body.insertBefore(note, actions);
+  }
+
   const ytBtn = document.createElement('button');
-  ytBtn.className = 'yt-btn';
-  ytBtn.innerHTML = '▶ Post to YouTube';
-  ytBtn.onclick = () => { ytStatus.style.display = 'block'; promptPost(g.filename, ytStatus, ytBtn); };
+  ytBtn.className = g.posted_at ? 'yt-btn posted-again' : 'yt-btn';
+  ytBtn.innerHTML = g.posted_at ? 'Post again' : '▶ Post to YouTube';
+  ytBtn.onclick = () => {
+    // Guard the repost: her actual problem was clicking Post twice, so make a
+    // second post a deliberate choice, not the default action.
+    if (g.posted_at) {
+      const when = new Date(g.posted_at).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
+      if (!confirm(`You already posted this to YouTube on ${when}.\n\nPost it again anyway?`)) return;
+    }
+    ytStatus.style.display = 'block';
+    promptPost(g.filename, ytStatus, ytBtn, g, card);
+  };
   actions.appendChild(ytBtn);
 
   const row = document.createElement('div');
@@ -777,6 +843,49 @@ function renderGeneratedEntry(g, container) {
 
   card.appendChild(body);
   container.appendChild(card);
+}
+
+// Turn a card into its "posted" look in place, right after a successful post,
+// so it matches how it'll render on the next History load. Idempotent so a
+// repost doesn't stack duplicate flags/notes.
+function markCardPosted(card, g) {
+  card.classList.add('is-posted');
+
+  const thumb = card.querySelector('.short-thumb');
+  if (thumb && !thumb.querySelector('.posted-flag')) {
+    const flag = document.createElement('span');
+    flag.className = 'posted-flag';
+    flag.textContent = '✓ Posted';
+    thumb.appendChild(flag);
+  }
+
+  const body = card.querySelector('.short-body');
+  const actions = card.querySelector('.short-actions');
+  if (!body || !actions) return;
+
+  // Reuse an existing note (so a repost updates the date/count in place) or
+  // create one the first time.
+  let note = body.querySelector('.posted-note');
+  if (!note) {
+    note = document.createElement('p');
+    note.className = 'posted-note';
+    body.insertBefore(note, actions);
+  }
+  note.textContent = '';
+
+  const when = new Date((g && g.posted_at) || Date.now()).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
+  const times = (g && g.post_count && g.post_count > 1) ? ` (${g.post_count}×)` : '';
+  const label = document.createElement('span');
+  label.textContent = `✓ Posted to YouTube on ${when}${times}`;
+  note.appendChild(label);
+  if (g && g.youtube_url) {
+    const watch = document.createElement('a');
+    watch.href = g.youtube_url;
+    watch.target = '_blank';
+    watch.rel = 'noopener';
+    watch.textContent = 'Watch ↗';
+    note.appendChild(watch);
+  }
 }
 
 async function deleteShort(g, card) {
