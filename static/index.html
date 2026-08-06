@@ -765,7 +765,7 @@ function renderGeneratedEntry(g, container) {
   if (g.posted_at) {
     const flag = document.createElement('span');
     flag.className = 'posted-flag';
-    flag.textContent = '✓ Posted';
+    flag.textContent = postedFlagLabel(g);
     thumb.appendChild(flag);
   }
   card.appendChild(thumb);
@@ -859,6 +859,17 @@ function renderGeneratedEntry(g, container) {
   container.appendChild(card);
 }
 
+// The little green flag on the thumbnail. A real post shows the date it went
+// up ("✓ Posted Aug 5"); a hand-marked one just says "✓ Posted" since we don't
+// know the true date it was posted.
+function postedFlagLabel(g) {
+  if (g && g.posted_at && !g.posted_manual) {
+    const d = new Date(g.posted_at).toLocaleDateString(undefined, {month:'short', day:'numeric'});
+    return `✓ Posted ${d}`;
+  }
+  return '✓ Posted';
+}
+
 // Fill a .posted-note element for a short. A real post shows its date, count,
 // and a Watch link; a hand-marked one just says it's posted (we don't have its
 // real date or link, so we never invent one).
@@ -909,11 +920,14 @@ function markCardPosted(card, g) {
   card.classList.add('is-posted');
 
   const thumb = card.querySelector('.short-thumb');
-  if (thumb && !thumb.querySelector('.posted-flag')) {
-    const flag = document.createElement('span');
-    flag.className = 'posted-flag';
-    flag.textContent = '✓ Posted';
-    thumb.appendChild(flag);
+  if (thumb) {
+    let flag = thumb.querySelector('.posted-flag');
+    if (!flag) {
+      flag = document.createElement('span');
+      flag.className = 'posted-flag';
+      thumb.appendChild(flag);
+    }
+    flag.textContent = postedFlagLabel(g);  // update, so a real post's date replaces a hand-mark's plain label
   }
 
   const body = card.querySelector('.short-body');
