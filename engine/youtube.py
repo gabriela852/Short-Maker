@@ -212,12 +212,19 @@ def _fallback_metadata(candidate_title, reason):
     return title, description
 
 
-def write_metadata(candidate_title, reason, source_title, api_key):
+def write_metadata(candidate_title, reason, source_title, api_key, title_override=None):
     """Returns (title, description). Uses Claude when a key is available, but
     always falls back to a plain template so posting never fails just because
-    the write-up call did."""
+    the write-up call did.
+
+    If title_override is given, that exact text becomes the YouTube title (only
+    tidied for length and stray AI dashes). This is how the app keeps the title
+    she sees on the History card identical to the title that lands on YouTube -
+    Claude is still used to write the description, just not to rewrite the title."""
+    forced_title = _strip_ai_dashes((title_override or "").strip())[:100] if title_override else None
     if not api_key:
-        return _fallback_metadata(candidate_title, reason)
+        title, description = _fallback_metadata(candidate_title, reason)
+        return (forced_title or title), description
     try:
         client = anthropic.Anthropic(api_key=api_key)
         user = (
@@ -237,10 +244,11 @@ def write_metadata(candidate_title, reason, source_title, api_key):
             if block.type == "tool_use" and block.name == "write_metadata":
                 title = _strip_ai_dashes((block.input.get("title") or candidate_title or "Watch this").strip())[:100]
                 description = _strip_ai_dashes((block.input.get("description") or "").strip())
-                return title, description
+                return (forced_title or title), description
     except Exception:
         pass
-    return _fallback_metadata(candidate_title, reason)
+    title, description = _fallback_metadata(candidate_title, reason)
+    return (forced_title or title), description
 
 
 # ---- Upload ----------------------------------------------------------------

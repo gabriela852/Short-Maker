@@ -185,6 +185,12 @@
     background: #fff; color: var(--navy); border: 1px solid #cfd8e3;
   }
   .short-actions .yt-btn.posted-again:hover { background: #f2f5f9; }
+  .short-actions .mark-btn {
+    margin-top: 6px; background: none; border: none; box-shadow: none;
+    color: var(--muted); font-size: 11px; text-decoration: underline;
+    padding: 2px; cursor: pointer; align-self: center; width: auto;
+  }
+  .short-actions .mark-btn:hover { color: var(--navy); background: none; opacity: 1; }
   .short-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
   .short-title { font-size: 13px; font-weight: 600; color: var(--text); margin: 0; line-height: 1.3; }
   .short-range, .short-date { font-size: 12px; color: var(--muted); margin: 0; display: flex; align-items: center; gap: 5px; }
@@ -555,6 +561,7 @@ async function postToYouTube(filename, statusEl, btn, privacy, g, card) {
       g.youtube_url = data.watch_url;
       g.posted_privacy = status;
       g.post_count = (g.post_count || 0) + 1;
+      g.posted_manual = false;  // a real post supersedes any earlier hand-mark
     }
     if (card) markCardPosted(card, g);
   } catch (e) {
@@ -771,7 +778,9 @@ function renderGeneratedEntry(g, container) {
     <p class="short-date">📅 <span></span></p>
     <div class="short-actions"></div>
   `;
-  body.querySelector('.short-title').textContent = g.candidate_title || 'Short';
+  // Show the exact title that goes to (or is on) YouTube: posted_title once
+  // posted, otherwise the working title that will be posted as-is.
+  body.querySelector('.short-title').textContent = g.posted_title || g.candidate_title || 'Short';
   body.querySelector('.short-range span').textContent = `${formatTime(g.start)} – ${formatTime(g.end)}`;
   body.querySelector('.short-date span').textContent =
     g.generated_at ? new Date(g.generated_at).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'}) : 'Unknown date';
@@ -789,19 +798,7 @@ function renderGeneratedEntry(g, container) {
   if (g.posted_at) {
     const note = document.createElement('p');
     note.className = 'posted-note';
-    const when = new Date(g.posted_at).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
-    const times = (g.post_count && g.post_count > 1) ? ` (${g.post_count}×)` : '';
-    const label = document.createElement('span');
-    label.textContent = `✓ Posted to YouTube on ${when}${times}`;
-    note.appendChild(label);
-    if (g.youtube_url) {
-      const watch = document.createElement('a');
-      watch.href = g.youtube_url;
-      watch.target = '_blank';
-      watch.rel = 'noopener';
-      watch.textContent = 'Watch ↗';
-      note.appendChild(watch);
-    }
+    fillPostedNote(note, g);
     body.insertBefore(note, actions);
   }
 
@@ -841,8 +838,68 @@ function renderGeneratedEntry(g, container) {
   actions.appendChild(row);
   actions.appendChild(ytStatus);
 
+  // Manual "already posted" control, for shorts posted before tracking existed
+  // (or posted by hand outside the app). Only offered when not tracked as a real
+  // post - a real post is recorded automatically and shouldn't be hand-cleared.
+  if (!g.posted_at) {
+    const mark = document.createElement('button');
+    mark.className = 'mark-btn';
+    mark.textContent = 'Mark as already posted';
+    mark.onclick = () => toggleMarkPosted(g, true);
+    actions.appendChild(mark);
+  } else if (g.posted_manual) {
+    const mark = document.createElement('button');
+    mark.className = 'mark-btn';
+    mark.textContent = 'Undo (not posted)';
+    mark.onclick = () => toggleMarkPosted(g, false);
+    actions.appendChild(mark);
+  }
+
   card.appendChild(body);
   container.appendChild(card);
+}
+
+// Fill a .posted-note element for a short. A real post shows its date, count,
+// and a Watch link; a hand-marked one just says it's posted (we don't have its
+// real date or link, so we never invent one).
+function fillPostedNote(note, g) {
+  note.textContent = '';
+  const label = document.createElement('span');
+  if (g && g.posted_manual) {
+    label.textContent = '✓ Posted to YouTube (marked by you)';
+    note.appendChild(label);
+    return;
+  }
+  const when = new Date((g && g.posted_at) || Date.now()).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
+  const times = (g && g.post_count && g.post_count > 1) ? ` (${g.post_count}×)` : '';
+  label.textContent = `✓ Posted to YouTube on ${when}${times}`;
+  note.appendChild(label);
+  if (g && g.youtube_url) {
+    const watch = document.createElement('a');
+    watch.href = g.youtube_url;
+    watch.target = '_blank';
+    watch.rel = 'noopener';
+    watch.textContent = 'Watch ↗';
+    note.appendChild(watch);
+  }
+}
+
+// Hand-mark a short as posted / not posted, then rebuild History so the card,
+// badge, and controls all reflect the new state cleanly.
+async function toggleMarkPosted(g, posted) {
+  if (!posted && !confirm('Mark this short as NOT posted?')) return;
+  try {
+    const res = await fetch('/api/youtube/mark', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename: g.filename, posted})
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    loadHistory();
+  } catch (e) {
+    alert('Something went wrong updating that short: ' + e);
+  }
 }
 
 // Turn a card into its "posted" look in place, right after a successful post,
@@ -871,21 +928,7 @@ function markCardPosted(card, g) {
     note.className = 'posted-note';
     body.insertBefore(note, actions);
   }
-  note.textContent = '';
-
-  const when = new Date((g && g.posted_at) || Date.now()).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
-  const times = (g && g.post_count && g.post_count > 1) ? ` (${g.post_count}×)` : '';
-  const label = document.createElement('span');
-  label.textContent = `✓ Posted to YouTube on ${when}${times}`;
-  note.appendChild(label);
-  if (g && g.youtube_url) {
-    const watch = document.createElement('a');
-    watch.href = g.youtube_url;
-    watch.target = '_blank';
-    watch.rel = 'noopener';
-    watch.textContent = 'Watch ↗';
-    note.appendChild(watch);
-  }
+  fillPostedNote(note, g);
 }
 
 async function deleteShort(g, card) {

@@ -285,6 +285,9 @@ def _record_post(filename, result, title):
     data["posted_privacy"] = result.get("privacy_status")
     data["posted_title"] = title
     data["post_count"] = int(data.get("post_count", 0)) + 1
+    # A real post supersedes any earlier hand-mark, so the card shows the real
+    # date and Watch link instead of "marked by you".
+    data.pop("posted_manual", None)
 
     tmp_path = sidecar_path + f".{uuid.uuid4().hex[:8]}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
@@ -420,11 +423,15 @@ def youtube_post():
         thumbnail_path = None
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
+    # Post the exact title she sees on the History card (candidate_title) so
+    # what's on YouTube always matches what she saw here; Claude still writes
+    # the description.
     title, description = youtube.write_metadata(
         sidecar.get("candidate_title", ""),
         sidecar.get("reason", ""),
         sidecar.get("source_title", ""),
         api_key,
+        title_override=sidecar.get("candidate_title", ""),
     )
 
     try:
@@ -446,6 +453,46 @@ def youtube_post():
     result["title"] = title
     result["description"] = description
     return jsonify(result)
+
+
+@app.route("/api/youtube/mark", methods=["POST"])
+def youtube_mark():
+    """Lets her hand-mark a short as already posted (or undo that) - for shorts
+    she posted before automatic tracking existed, or posted by hand outside the
+    app. A manual mark carries no watch link or count, just the fact that it's
+    up, so History can show it apart from the not-yet-posted ones."""
+    data = request.get_json(force=True)
+    filename = os.path.basename((data.get("filename") or "").strip())
+    posted = bool(data.get("posted"))
+    if not filename:
+        return jsonify({"error": "No short specified."}), 400
+
+    # Path safety: the sidecar must stay inside OUTPUT_DIR (same guard as /delete).
+    sidecar_path = os.path.abspath(os.path.join(OUTPUT_DIR, os.path.splitext(filename)[0] + ".json"))
+    if os.path.commonpath([sidecar_path, os.path.abspath(OUTPUT_DIR)]) != os.path.abspath(OUTPUT_DIR):
+        return jsonify({"error": "Invalid file path."}), 400
+
+    try:
+        with open(sidecar_path, "r", encoding="utf-8") as f:
+            sc = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return jsonify({"error": "That short's details aren't on this computer anymore."}), 400
+
+    if posted:
+        sc["posted_at"] = datetime.datetime.now().isoformat()
+        sc["posted_manual"] = True
+    else:
+        # Undo cleanly so the card reverts to the plain not-posted look.
+        for k in ("posted_at", "posted_manual", "post_count", "youtube_url",
+                  "posted_privacy", "youtube_video_id", "posted_title"):
+            sc.pop(k, None)
+
+    tmp_path = sidecar_path + f".{uuid.uuid4().hex[:8]}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(sc, f)
+    os.replace(tmp_path, sidecar_path)
+
+    return jsonify({"ok": True, "posted": posted})
 
 
 @app.route("/api/file/<path:filename>")
