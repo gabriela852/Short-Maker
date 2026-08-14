@@ -160,6 +160,7 @@ def generate():
     candidate_title = data.get("candidate_title", "")
     reason = data.get("reason", "")
     thumbnail_seconds = data.get("thumbnail_seconds")
+    title_text = (data.get("title_text") or "").strip()
 
     video = _get_video(video_id)
     if video is None:
@@ -178,6 +179,7 @@ def generate():
             framing=frame_info,
             crop_x_pct=float(crop_x_pct),
             caption_margin_v=float(caption_margin_v),
+            title_text=title_text,
         )
     except Exception as e:
         traceback.print_exc()
@@ -193,7 +195,7 @@ def generate():
         thumb_path = clip.make_thumbnail(
             video["video_path"], video["words"], float(start), float(end), thumb_time,
             framing=frame_info, crop_x_pct=float(crop_x_pct), caption_margin_v=float(caption_margin_v),
-            output_name=os.path.splitext(filename)[0] + ".jpg",
+            output_name=os.path.splitext(filename)[0] + ".jpg", title_text=title_text,
         )
         thumbnail_filename = os.path.basename(thumb_path)
     except Exception:
@@ -202,6 +204,7 @@ def generate():
     _save_generated_sidecar(
         filename, video_id, video.get("title", video_id), candidate_title, reason,
         float(start), float(end), float(crop_x_pct), float(caption_margin_v), thumbnail_filename,
+        title_text,
     )
     resp = {"filename": filename, "url": f"/api/file/{filename}"}
     if thumbnail_filename:
@@ -219,6 +222,7 @@ def preview():
     auto = data.get("auto", True)
     crop_x_pct = data.get("crop_x_pct", 0.5)
     caption_margin_v = data.get("caption_margin_v", 90)
+    title_text = (data.get("title_text") or "").strip()
 
     video = _get_video(video_id)
     if video is None:
@@ -238,6 +242,7 @@ def preview():
             framing=frame_info,
             crop_x_pct=float(crop_x_pct),
             caption_margin_v=float(caption_margin_v),
+            title_text=title_text,
         )
     except Exception as e:
         traceback.print_exc()
@@ -247,7 +252,7 @@ def preview():
     return jsonify({"url": f"/api/preview_file/{filename}", "auto_used": frame_info is not None})
 
 
-def _save_generated_sidecar(filename, video_id, source_title, candidate_title, reason, start, end, crop_x_pct, caption_margin_v, thumbnail_filename=None):
+def _save_generated_sidecar(filename, video_id, source_title, candidate_title, reason, start, end, crop_x_pct, caption_margin_v, thumbnail_filename=None, title_text=""):
     data = {
         "filename": filename,
         "video_id": video_id,
@@ -258,6 +263,7 @@ def _save_generated_sidecar(filename, video_id, source_title, candidate_title, r
         "end": end,
         "crop_x_pct": crop_x_pct,
         "caption_margin_v": caption_margin_v,
+        "title_text": title_text,
         "thumbnail_filename": thumbnail_filename,
         "generated_at": datetime.datetime.now().isoformat(),
     }

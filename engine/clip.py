@@ -16,6 +16,17 @@ TARGET_H = 1920
 WORDS_PER_CAPTION = 5
 PREVIEW_MAX_AGE_SECONDS = 60
 
+# Title banner (the optional headline burned across the TOP of the short, above
+# her head). Rendered from a hand-written ASS file that declares the real
+# 1080x1920 canvas, so - unlike the caption SRT (see FFMPEG_ASS_DEFAULT_PLAYRES_Y)
+# - every size below is in true output pixels with no libass rescaling guesswork.
+TITLE_FONT = "Arial"
+TITLE_FONTSIZE = 88          # ~ same visual size as the burned captions
+TITLE_OUTLINE = 5            # thick black outline so white text reads on any background
+TITLE_SHADOW = 2
+TITLE_MARGIN_LR = 70         # left/right padding -> text wraps within ~940px
+TITLE_MARGIN_V = 80          # distance down from the top edge
+
 
 def _srt_timestamp(seconds):
     seconds = max(0.0, seconds)
@@ -134,6 +145,58 @@ def _build_filter(srt_path, framing, crop_x_pct, caption_margin_v):
     return f"scale={framing['scaled_w']}:{framing['scaled_h']},{crop_expr},{subtitles_arg}"
 
 
+def _ass_escape(text):
+    """Makes user title text safe to drop into an ASS Dialogue line. Braces open
+    ASS override tags and backslashes are control chars, so neutralize both;
+    real line breaks are folded to spaces (the banner wraps on its own)."""
+    text = text.replace("\\", "/").replace("{", "(").replace("}", ")")
+    text = text.replace("\r", " ").replace("\n", " ")
+    while "  " in text:
+        text = text.replace("  ", " ")
+    return text.strip()
+
+
+def _build_title_ass(title_text, ass_path):
+    """Writes a one-line ASS file for the top title banner. Declaring PlayResX/Y
+    at the true 1080x1920 means libass renders at real pixels (no PlayResY=288
+    rescaling), and Alignment=8 pins it top-center. The single event spans the
+    whole clip, so the banner is simply always on - no per-frame timing to keep
+    in sync with the pre-roll seek the way the captions need."""
+    text = _ass_escape(title_text)
+    content = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {TARGET_W}\n"
+        f"PlayResY: {TARGET_H}\n"
+        "WrapStyle: 0\n"
+        "ScaledBorderAndShadow: yes\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
+        "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+        "MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Title,{TITLE_FONT},{TITLE_FONTSIZE},&H00FFFFFF,&H000000FF,"
+        f"&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{TITLE_OUTLINE},"
+        f"{TITLE_SHADOW},8,{TITLE_MARGIN_LR},{TITLE_MARGIN_LR},{TITLE_MARGIN_V},1\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        f"Dialogue: 0,0:00:00.00,9:59:59.99,Title,,0,0,0,,{text}\n"
+    )
+    with open(ass_path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def _append_title(vf, title_text, ass_path):
+    """Appends the top-title subtitles filter onto an existing filter chain when
+    a non-empty title is given (otherwise returns the chain unchanged, so shorts
+    without a title render exactly as before). Writes the ASS file as a side
+    effect. Returns (vf, ass_path_or_None) so callers can clean up temp files."""
+    if not title_text or not title_text.strip():
+        return vf, None
+    _build_title_ass(title_text, ass_path)
+    return f"{vf},subtitles='{_escape_for_filter(ass_path)}'", ass_path
+
+
 # Video-encoder choices for the full render. Quick Sync (h264_qsv) is Intel's
 # built-in hardware encoder - on the Iris Xe laptop it renders a clip ~3-4x
 # faster than grinding every frame on the CPU with libx264. We try it first and
@@ -186,7 +249,7 @@ def _sweep_old_previews():
             pass
 
 
-def make_short(video_path, words, start, end, output_name=None, framing=None, crop_x_pct=0.5, caption_margin_v=90):
+def make_short(video_path, words, start, end, output_name=None, framing=None, crop_x_pct=0.5, caption_margin_v=90, title_text=""):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(WORK_DIR, exist_ok=True)
 
@@ -205,18 +268,28 @@ def make_short(video_path, words, start, end, output_name=None, framing=None, cr
     _build_srt(words, start, end, srt_path, time_origin=coarse_seek)
 
     vf = _build_filter(srt_path, framing, crop_x_pct, caption_margin_v)
+    vf, title_ass = _append_title(vf, title_text, os.path.join(WORK_DIR, f"{job_id}_title.ass"))
 
-    _encode_clip(
-        pre_input=["-ss", str(coarse_seek), "-i", video_path],
-        post_input=["-ss", str(remainder_seek), "-t", str(duration)],
-        vf=vf,
-        output_path=output_path,
-    )
+    try:
+        _encode_clip(
+            pre_input=["-ss", str(coarse_seek), "-i", video_path],
+            post_input=["-ss", str(remainder_seek), "-t", str(duration)],
+            vf=vf,
+            output_path=output_path,
+        )
+    finally:
+        # Tidy the per-job temp files so WORK_DIR doesn't slowly accumulate them.
+        for tmp in (srt_path, title_ass):
+            if tmp:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
 
     return output_path
 
 
-def make_preview_frame(video_path, words, start, end, timestamp=None, framing=None, crop_x_pct=0.5, caption_margin_v=90):
+def make_preview_frame(video_path, words, start, end, timestamp=None, framing=None, crop_x_pct=0.5, caption_margin_v=90, title_text=""):
     """Extracts one JPEG frame with the same crop+caption filter chain used by
     make_short, so the user can see the result before committing to a full render."""
     os.makedirs(WORK_DIR, exist_ok=True)
@@ -234,6 +307,7 @@ def make_preview_frame(video_path, words, start, end, timestamp=None, framing=No
 
     output_path = os.path.join(WORK_DIR, f"preview_{job_id}.jpg")
     vf = _build_filter(srt_path, framing, crop_x_pct, caption_margin_v)
+    vf, title_ass = _append_title(vf, title_text, os.path.join(WORK_DIR, f"preview_{job_id}_title.ass"))
 
     cmd = [
         FFMPEG, "-y",
@@ -244,10 +318,12 @@ def make_preview_frame(video_path, words, start, end, timestamp=None, framing=No
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True, creationflags=SUBPROCESS_FLAGS)
-    try:
-        os.remove(srt_path)
-    except OSError:
-        pass
+    for tmp in (srt_path, title_ass):
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg preview failed:\n{result.stderr[-2000:]}")
@@ -286,7 +362,7 @@ def _best_face_time(video_path, t, lo, hi, window=0.4, samples=5):
 
 
 def make_thumbnail(video_path, words, start, end, thumb_time, framing=None,
-                   crop_x_pct=0.5, caption_margin_v=90, output_name=None):
+                   crop_x_pct=0.5, caption_margin_v=90, output_name=None, title_text=""):
     """Saves a ready-to-upload 1080x1920 thumbnail JPEG: the most
     attention-grabbing caption line of the clip, on a frame where the speaker's
     face looks good. Same crop/caption styling as the short itself."""
@@ -306,6 +382,7 @@ def make_thumbnail(video_path, words, start, end, thumb_time, framing=None,
         f.write(f"1\n{_srt_timestamp(0)} --> {_srt_timestamp(10)}\n{caption}\n\n")
 
     vf = _build_filter(srt_path, framing, crop_x_pct, caption_margin_v)
+    vf, title_ass = _append_title(vf, title_text, os.path.join(WORK_DIR, f"thumb_{job_id}_title.ass"))
 
     output_name = output_name or f"thumb_{job_id}.jpg"
     output_path = os.path.join(OUTPUT_DIR, output_name)
@@ -318,10 +395,12 @@ def make_thumbnail(video_path, words, start, end, thumb_time, framing=None,
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True, creationflags=SUBPROCESS_FLAGS)
-    try:
-        os.remove(srt_path)
-    except OSError:
-        pass
+    for tmp in (srt_path, title_ass):
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg thumbnail failed:\n{result.stderr[-2000:]}")
