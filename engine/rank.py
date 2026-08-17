@@ -23,7 +23,7 @@ PICK_SHORTS_TOOL = {
             "candidates": {
                 "type": "array",
                 "minItems": 1,
-                "maxItems": 6,
+                "maxItems": 15,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -56,14 +56,15 @@ PICK_SHORTS_TOOL = {
     },
 }
 
-SYSTEM_PROMPT = """You are an expert short-form video editor, in the style of a senior editor at CapCut or Descript who \
+def _system_prompt(max_clips):
+    return f"""You are an expert short-form video editor, in the style of a senior editor at CapCut or Descript who \
 specializes in finding viral moments in long-form YouTube videos to turn into 30-60 second Shorts/Reels/TikToks.
 
 You are given a transcript that has already been split into numbered segments, one per line, like:
 [0] (00:00) Hey, how's it going?
 [1] (00:03) I just won a hackathon and I'm not a software engineer.
 
-Find the 6 best possible standalone clips. A great clip:
+Find the {max_clips} best possible standalone clips. A great clip:
 - OPENS ON THE MOST SCROLL-STOPPING MOMENT of the clip - the single most shocking, beautiful, surprising, or \
 high-energy line you can find. This is the hook, and it MUST land in the very first second: viewers decide in 1-2 \
 seconds whether to keep watching, so never open on setup, context, or slow build-up. Start exactly where the energy \
@@ -85,13 +86,13 @@ Report each clip as a range of segment indices: start_index (the first segment t
 segment to include, inclusive). Choose start_index so the clip opens on a full sentence, and end_index so it closes on \
 a finished thought.
 
-Return 6 clips whenever the video can genuinely support that many. They MUST be distinct:
+Return {max_clips} clips whenever the video can genuinely support that many. They MUST be distinct:
 - Their segment ranges must NOT overlap - no clip may share a segment with another clip.
 - Each must come from a different part or topic of the video. Never pick two variations of the same beat, the \
 same story, or the same line said twice.
 - Spread them across the whole video (beginning, middle, and end), not clustered in one stretch.
 
-Only return fewer than 6 if the video is genuinely too short or too repetitive to yield 6 strong, non-overlapping \
+Only return fewer than {max_clips} if the video is genuinely too short or too repetitive to yield {max_clips} strong, non-overlapping \
 clips - in that case return as many genuinely distinct ones as it truly supports, rather than padding with weak or \
 overlapping picks.
 
@@ -237,14 +238,22 @@ def find_best_moments(words, api_key):
         raise RuntimeError("This video's transcript came through empty, so there's nothing to analyze.")
     n = len(segments)
 
+    # How many clips to look for scales with the video's length - about one per
+    # minute - so a 10-minute video surfaces up to ~10 and a short video isn't
+    # padded with weak picks. Floored at 3 so short videos still yield a few, and
+    # capped at 15 (the tool schema's ceiling). The model still returns fewer if
+    # the video can't genuinely support this many, always strongest-first.
+    duration_seconds = segments[-1]["end"] if segments else 0
+    max_clips = max(3, min(15, round(duration_seconds / 60)))
+
     transcript_text = "\n".join(
         f"[{i}] ({_format_timestamp(s['start'])}) {s['text']}" for i, s in enumerate(segments)
     )
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=3500,
-        system=SYSTEM_PROMPT,
+        max_tokens=6000,
+        system=_system_prompt(max_clips),
         tools=[PICK_SHORTS_TOOL],
         tool_choice={"type": "tool", "name": "pick_shorts"},
         messages=[
@@ -276,7 +285,7 @@ def find_best_moments(words, api_key):
                     i1 = _extend_end_to_floor(segments, i0, i1, _MIN_CLIP_SECONDS)
                 # Distinctness guard: candidates arrive best-first, so if this one
                 # shares any segment with a clip we've already kept, drop it - the
-                # user wants 6 *distinct* shorts, not near-duplicates of one moment.
+                # user wants *distinct* shorts, not near-duplicates of one moment.
                 if any(i0 <= k1 and k0 <= i1 for k0, k1 in kept_ranges):
                     continue
                 kept_ranges.append((i0, i1))
