@@ -102,6 +102,20 @@
   .candidate h3 { margin: 0 0 6px; font-size: 16px; color: var(--navy); }
   .candidate .time { font-size: 13px; color: var(--gold); font-weight: 600; }
   .candidate p { font-size: 14px; color: var(--muted); margin: 8px 0; }
+  /* Top row of each suggestion: its rank number on the left, a remove X on the right. */
+  .cand-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .cand-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 28px; height: 28px; padding: 0 9px;
+    border-radius: 14px; background: var(--navy); color: #fff;
+    font-weight: 700; font-size: 14px;
+  }
+  .cand-remove {
+    background: transparent; color: var(--muted); border: none;
+    font-size: 20px; line-height: 1; cursor: pointer;
+    padding: 2px 9px; margin: 0; border-radius: 8px; width: auto;
+  }
+  .cand-remove:hover { background: #fde8e8; color: #c4302b; opacity: 1; }
   #settingsBox.saved { display: none; }
   #settingsSaved { display: none; font-size: 13px; color: var(--muted); }
   #settingsSaved.show { display: block; }
@@ -401,7 +415,7 @@ async function analyze() {
     const container = document.getElementById('freshResults');
     data.candidates.forEach((c, i) => {
       const domKey = `create-${data.video_id}-${i}`;
-      renderCandidateCard(domKey, data.video_id, c, data.segments, container, true);
+      renderCandidateCard(domKey, data.video_id, c, data.segments, container, true, i + 1);
     });
   } catch (e) {
     statusEl.innerHTML = '<p class="error">Something went wrong: ' + e + '</p>';
@@ -633,11 +647,11 @@ function renderAnalysisEntry(entry, container) {
 
   entry.candidates.forEach((c, i) => {
     const domKey = `history-${entry.video_id}-${i}`;
-    renderCandidateCard(domKey, entry.video_id, c, entry.segments, wrap, true);
+    renderCandidateCard(domKey, entry.video_id, c, entry.segments, wrap, true, i + 1);
   });
 }
 
-function renderCandidateCard(domKey, videoId, c, segments, container, eager) {
+function renderCandidateCard(domKey, videoId, c, segments, container, eager, num) {
   segments = segments || [];
   // Fall back gracefully for older analyses saved before trim existed.
   const hasSegs = segments.length > 0 && c.start_index != null && c.end_index != null;
@@ -678,6 +692,10 @@ function renderCandidateCard(domKey, videoId, c, segments, container, eager) {
   const div = document.createElement('div');
   div.className = 'candidate';
   div.innerHTML = `
+    <div class="cand-top">
+      <span class="cand-num">#${num}</span>
+      <button type="button" class="cand-remove" title="Delete this suggestion" aria-label="Delete this suggestion" onclick="removeCandidate('${domKey}', this)">✕</button>
+    </div>
     <div class="time" id="time-${domKey}">${formatTime(c.start_seconds)} - ${formatTime(c.end_seconds)}</div>
     <h3></h3>
     <p></p>
@@ -707,6 +725,16 @@ function renderCandidateCard(domKey, videoId, c, segments, container, eager) {
   container.appendChild(div);
   if (hasSegs) updateTrimUI(domKey);
   if (eager) updatePreview(domKey);
+}
+
+// Remove a suggested clip she doesn't want. These are on-screen suggestions,
+// not saved files, so this just clears the card from the list - nothing on disk
+// is touched, and re-analyzing the video brings the full set back. Numbers stay
+// as each clip's rank (#1 = strongest), so they don't shuffle when one is removed.
+function removeCandidate(domKey, btn) {
+  const card = btn.closest('.candidate');
+  if (card) card.remove();
+  delete state[domKey];
 }
 
 function edgeWords(text, fromEnd) {
