@@ -16,16 +16,19 @@ TARGET_H = 1920
 WORDS_PER_CAPTION = 5
 PREVIEW_MAX_AGE_SECONDS = 60
 
-# Title banner (the optional headline burned across the TOP of the short, above
-# her head). Rendered from a hand-written ASS file that declares the real
-# 1080x1920 canvas, so - unlike the caption SRT (see FFMPEG_ASS_DEFAULT_PLAYRES_Y)
-# - every size below is in true output pixels with no libass rescaling guesswork.
+# Title banner (the optional headline burned across the TOP of the short). It is
+# styled to look CLEARLY DIFFERENT from the bottom captions so a viewer can tell
+# them apart: white text on a solid BLUE BAR (matching her background art), set a
+# little below the very top. Rendered from a hand-written ASS file that declares
+# the real 1080x1920 canvas, so - unlike the caption SRT (see
+# FFMPEG_ASS_DEFAULT_PLAYRES_Y) - every size below is in true output pixels with
+# no libass rescaling guesswork.
 TITLE_FONT = "Arial"
-TITLE_FONTSIZE = 88          # ~ same visual size as the burned captions
-TITLE_OUTLINE = 5            # thick black outline so white text reads on any background
-TITLE_SHADOW = 2
-TITLE_MARGIN_LR = 70         # left/right padding -> text wraps within ~940px
-TITLE_MARGIN_V = 80          # distance down from the top edge
+TITLE_FONTSIZE = 78          # a touch smaller than the captions so the bar stays tidy
+TITLE_BOX_COLOUR = "&H009A6E3F"  # the blue bar behind the title, ASS &H00BBGGRR (#3F6E9A)
+TITLE_BOX_PAD = 14           # padding of the coloured box around the text (ASS Outline w/ BorderStyle=3)
+TITLE_MARGIN_LR = 70         # left/right text padding -> wraps within ~940px
+TITLE_MARGIN_V = 165         # distance down from the top edge (sits a bit below the very top)
 
 
 def _srt_timestamp(seconds):
@@ -135,12 +138,15 @@ def _build_filter(srt_path, framing, crop_x_pct, caption_margin_v):
     """Builds the -vf filter chain. When `framing` is a face-detected crop
     (from engine.framing.detect_face_framing) it scales to fill the frame and
     crops the full-screen 9:16 window centered on the speaker's face. When
-    `framing` is None it uses the manual/Advanced crop_x_pct/caption_margin_v
-    values instead."""
+    `framing` is None it uses the manual/Advanced crop_x_pct instead.
+
+    The caption vertical position always comes from `caption_margin_v`, whether
+    or not face framing is used, so the user can nudge the caption up/down (to
+    keep it off her face) WITHOUT turning off the automatic face-centering."""
     if framing is None:
         return _build_vf(srt_path, crop_x_pct, caption_margin_v)
 
-    subtitles_arg = f"subtitles='{_escape_for_filter(srt_path)}':force_style='{_ass_style(framing['margin_v'])}'"
+    subtitles_arg = f"subtitles='{_escape_for_filter(srt_path)}':force_style='{_ass_style(caption_margin_v)}'"
     crop_expr = f"crop={TARGET_W}:{TARGET_H}:x={framing['crop_x']}:y={framing['crop_y']}"
     return f"scale={framing['scaled_w']}:{framing['scaled_h']},{crop_expr},{subtitles_arg}"
 
@@ -176,8 +182,8 @@ def _build_title_ass(title_text, ass_path):
         "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
         "MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Title,{TITLE_FONT},{TITLE_FONTSIZE},&H00FFFFFF,&H000000FF,"
-        f"&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{TITLE_OUTLINE},"
-        f"{TITLE_SHADOW},8,{TITLE_MARGIN_LR},{TITLE_MARGIN_LR},{TITLE_MARGIN_V},1\n\n"
+        f"{TITLE_BOX_COLOUR},&H00000000,-1,0,0,0,100,100,0,0,3,{TITLE_BOX_PAD},"
+        f"0,8,{TITLE_MARGIN_LR},{TITLE_MARGIN_LR},{TITLE_MARGIN_V},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
         f"Dialogue: 0,0:00:00.00,9:59:59.99,Title,,0,0,0,,{text}\n"
