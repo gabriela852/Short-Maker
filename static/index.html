@@ -141,6 +141,11 @@
   .title-toggle { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; color: var(--navy); cursor: pointer; margin-bottom: 0; }
   .title-toggle input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--navy); }
   .title-body { margin-top: 8px; }
+  .title-actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .title-rewrite { font-size: 12px; font-weight: 600; color: var(--navy); background: #f2f4f8; border: 1px solid #d8deea; border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+  .title-rewrite:hover { background: #e8ecf5; }
+  .title-rewrite:disabled { opacity: 0.5; cursor: default; }
+  .title-thinking { font-size: 12px; color: var(--muted); }
   .adjust { margin-top: 12px; max-width: 260px; }
   .adjust label { font-weight: 600; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
   .adjust .slider-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
@@ -667,7 +672,7 @@ function renderCandidateCard(domKey, videoId, c, segments, container, eager, num
     startIdx: hasSegs ? c.start_index : null,
     endIdx: hasSegs ? c.end_index : null,
     auto: true, crop_x_pct: 0.5, caption_margin_v: 90,
-    title_text: '', title_on: false,
+    title_text: '', title_on: false, headline_generated: false,
   };
 
   const trimBlock = hasSegs ? `
@@ -709,7 +714,11 @@ function renderCandidateCard(domKey, videoId, c, segments, container, eager, num
       </label>
       <div class="title-body" id="titleBody-${domKey}" style="display:none">
         <input type="text" id="titleText-${domKey}" maxlength="80" placeholder="e.g. 3 signs you've outgrown your life" oninput="onTitleChange('${domKey}')">
-        <p class="hint">Big headline shown at the very top of the short.</p>
+        <div class="title-actions">
+          <button type="button" class="title-rewrite" id="titleRewrite-${domKey}" onclick="writeHeadline('${domKey}', true)">↻ Suggest another</button>
+          <span class="title-thinking" id="titleThinking-${domKey}" style="display:none">writing a headline...</span>
+        </div>
+        <p class="hint">Claude writes a headline when you switch this on. Edit it, or write your own.</p>
       </div>
     </div>
     <div class="preview-wrap"><img id="previewImg-${domKey}" alt="preview"></div>
@@ -1017,7 +1026,8 @@ function onTitleChange(domKey) {
 
 // The on/off switch for the top title. When off, the title text is kept in
 // state but never sent, so the short renders with no headline. When on, the
-// text box appears and the preview refreshes to show the title.
+// text box appears; if it's empty and we haven't written one yet, Claude writes
+// a headline automatically. Otherwise the preview just refreshes.
 function onTitleToggle(domKey) {
   const cb = document.getElementById('titleOn-' + domKey);
   const body = document.getElementById('titleBody-' + domKey);
@@ -1027,9 +1037,54 @@ function onTitleToggle(domKey) {
   if (body) body.style.display = cb.checked ? 'block' : 'none';
   if (cb.checked) {
     const el = document.getElementById('titleText-' + domKey);
-    if (el) { s.title_text = el.value; el.focus(); }
+    if (el) s.title_text = el.value;
+    if (!(s.title_text || '').trim() && !s.headline_generated) {
+      writeHeadline(domKey, false);  // this refreshes the preview once it fills
+      return;
+    }
   }
   updatePreview(domKey);
+}
+
+// Asks the backend for a short on-screen headline for this clip and drops it in
+// the box. force=true is the "Suggest another" button, which asks for a fresh
+// angle different from what's already there. On any failure it fails quietly so
+// she can always type her own instead.
+async function writeHeadline(domKey, force) {
+  const s = state[domKey];
+  const input = document.getElementById('titleText-' + domKey);
+  const think = document.getElementById('titleThinking-' + domKey);
+  const btn = document.getElementById('titleRewrite-' + domKey);
+  if (!s || !input) return;
+  if (think) think.style.display = 'inline';
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch('/api/headline', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        video_id: s.video_id, start: s.start, end: s.end,
+        candidate_title: s.candidate_title, reason: s.reason,
+        avoid: force ? (input.value || '') : ''
+      })
+    });
+    const data = await res.json();
+    if (data.headline) {
+      input.value = data.headline;
+      s.title_text = data.headline;
+      s.headline_generated = true;
+      updatePreview(domKey);
+    } else if (data.error && think) {
+      think.textContent = data.error;
+      setTimeout(() => { think.style.display = 'none'; think.textContent = 'writing a headline...'; }, 4000);
+      if (btn) btn.disabled = false;
+      return;
+    }
+  } catch (e) {
+    // Network hiccup: leave the box as-is, she can still write her own.
+  }
+  if (think) think.style.display = 'none';
+  if (btn) btn.disabled = false;
 }
 
 function onSliderChange(domKey) {

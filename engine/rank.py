@@ -227,6 +227,86 @@ def _extend_end_to_floor(segments, i0, i1, min_seconds):
     return j
 
 
+# --- On-screen title banner headline ------------------------------------------
+# A separate, tiny generation for the big headline burned across the TOP of the
+# short (the optional title banner, see engine/clip.py). This is NOT the YouTube
+# title and NOT the captions - it is the on-screen hook a viewer reads in the
+# first second. It is deliberately much shorter and punchier than the working
+# clip title, and it obeys the no-dash rule (long dashes read as AI).
+
+WRITE_HEADLINE_TOOL = {
+    "name": "write_headline",
+    "description": "Report one short on-screen title-banner headline for the clip.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "headline": {
+                "type": "string",
+                "description": "The on-screen headline text. At most 60 characters, ideally 3 to 7 words.",
+            }
+        },
+        "required": ["headline"],
+    },
+}
+
+_HEADLINE_SYSTEM = """You write the big TITLE BANNER that sits across the very top of a vertical short \
+video (Reels / TikTok / YouTube Shorts), above the speaker's head. This is NOT the YouTube title and NOT the \
+captions. It is the on-screen hook a viewer reads in the first second while deciding whether to keep scrolling.
+
+Rules for the headline:
+- VERY SHORT. Aim for 3 to 7 words, never more than 60 characters. It has to fit at a large size on one or two lines.
+- It must make someone STOP SCROLLING: a bold claim, a relatable feeling, a curiosity gap, a "POV:" line, or a \
+"friendly reminder that..." Match the real emotional core of this specific clip.
+- Sound like a warm, real person talking to a friend. No clickbait, no ALL CAPS, no emoji, no hashtags, and no \
+surrounding quotation marks.
+- NEVER use an em dash or en dash. Use a comma, a period, or a plain hyphen instead.
+- Do not just repeat the spoken words verbatim. Capture the hook behind them.
+
+Return exactly one headline using the write_headline tool."""
+
+
+def _clean_headline(text):
+    """Tidy the model's headline: drop wrapping quotes, swap any long dash for a
+    comma (the no-dash rule), collapse doubled spaces, and hard-cap length so it
+    can never overflow the 80-char banner input."""
+    h = (text or "").strip().strip('"“”‘’\'')
+    h = h.replace("—", ", ").replace("–", ", ")  # em / en dash -> comma
+    while "  " in h:
+        h = h.replace("  ", " ")
+    return h.strip(" ,").strip()[:80]
+
+
+def write_headline(clip_text, candidate_title, reason, api_key, avoid=None):
+    """Writes one short on-screen banner headline for a single clip. `avoid` is
+    the current headline the user wants replaced (the Suggest another button), so
+    the model is told to take a fresh angle instead of repeating it."""
+    client = anthropic.Anthropic(api_key=api_key)
+
+    user = (
+        f'The clip\'s spoken words:\n"{clip_text}"\n\n'
+        f"A working title we already have for it: {candidate_title}\n"
+        f"Why this moment is engaging: {reason}"
+    )
+    if avoid:
+        user += f'\n\nGive a DIFFERENT headline from this one, a genuinely fresh angle: "{avoid}"'
+
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=200,
+        system=_HEADLINE_SYSTEM,
+        tools=[WRITE_HEADLINE_TOOL],
+        tool_choice={"type": "tool", "name": "write_headline"},
+        messages=[{"role": "user", "content": user}],
+    )
+
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "write_headline":
+            headline = _clean_headline(block.input.get("headline", ""))
+            if headline:
+                return headline
+    raise RuntimeError("Claude didn't return a headline. Try again.")
+
+
 def find_best_moments(words, api_key):
     """Returns (candidates, segments). Each candidate carries both segment
     indices (start_index/end_index, for the trim UI) and the seconds they map

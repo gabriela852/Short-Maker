@@ -148,6 +148,48 @@ def analyze():
     )
 
 
+def _clip_transcript(words, start, end):
+    """The spoken words inside [start, end], joined into plain text - what the
+    headline writer reads to capture the clip's hook."""
+    return " ".join(
+        w["text"].strip() for w in words if w["end"] > start and w["start"] < end
+    ).strip()
+
+
+@app.route("/api/headline", methods=["POST"])
+def headline():
+    """Writes a short on-screen title-banner headline for one clip. Used by the
+    title switch (auto-fills when turned on) and the Suggest another button."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return jsonify({"error": "Add your Anthropic API key first (see the Settings box)."}), 400
+
+    data = request.get_json(force=True)
+    video_id = data.get("video_id")
+    start = data.get("start")
+    end = data.get("end")
+    candidate_title = data.get("candidate_title", "")
+    reason = data.get("reason", "")
+    avoid = (data.get("avoid") or "").strip()
+
+    video = _get_video(video_id)
+    if video is None:
+        return jsonify({"error": "That video isn't loaded anymore - click Analyze again first."}), 400
+    if start is None or end is None or end <= start:
+        return jsonify({"error": "Invalid clip times."}), 400
+
+    clip_text = _clip_transcript(video["words"], float(start), float(end))
+    try:
+        headline_text = rank.write_headline(
+            clip_text, candidate_title, reason, api_key, avoid=avoid or None
+        )
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({"headline": headline_text})
+
+
 @app.route("/api/generate", methods=["POST"])
 def generate():
     data = request.get_json(force=True)
