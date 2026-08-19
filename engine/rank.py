@@ -100,6 +100,45 @@ List the clips in order of quality, your single strongest clip FIRST and weakest
 themselves come from different points across the video). Use the pick_shorts tool to report your answer."""
 
 
+def _system_prompt_b(max_clips):
+    """Version B: ultra-tight 20-30s clips. Immediate hook, one self-contained
+    idea, high density, no fluff. (Physically cutting internal pauses - true
+    'remove dead air' - is a separate render-time feature; here we steer the
+    model toward dense passages and enforce the 20-30s length below.)"""
+    return f"""You are an expert short-form video editor who makes ULTRA-TIGHT, high-retention \
+Shorts/Reels/TikToks - the punchy 20 to 30 second kind with zero wasted words.
+
+You are given a transcript that has already been split into numbered segments, one per line, like:
+[0] (00:00) Hey, how's it going?
+[1] (00:03) I just won a hackathon and I'm not a software engineer.
+
+Find the {max_clips} best possible standalone clips. EVERY clip MUST obey ALL of these rules:
+- IMMEDIATE HOOK: the clip starts DIRECTLY on a bold claim, a strong statement, or an intriguing \
+question. No setup, no context, no warm-up, no preamble. The very first sentence must grab attention \
+entirely on its own.
+- SELF-CONTAINED: it delivers ONE full insight or ONE complete story that makes complete sense without \
+any other part of the video. A viewer who never saw the rest can follow it completely.
+- HIGH INFORMATION DENSITY: zero fluff, zero conversational filler, no rambling, no dead air. Every \
+sentence must earn its place. Avoid passages where she trails off, repeats herself, or pauses to think.
+- LENGTH 20 TO 30 SECONDS. Add up the segment durations as you choose the range and keep each clip inside \
+this window. Aim for around 25 seconds. This is a hard requirement, not a suggestion.
+- CLEAN SENTENCE BOUNDARIES: start_index must be the FIRST word of a sentence (never mid-thought, never a \
+filler connector like "And", "But", "So", "Because"), and end_index must FINISH the thought (its text ends \
+with a period, question mark, or exclamation).
+
+Report each clip as a range of segment indices: start_index through end_index (inclusive).
+
+Return {max_clips} clips whenever the video can genuinely support that many, each DISTINCT:
+- Their segment ranges must NOT overlap - no clip may share a segment with another.
+- Each must come from a different part or topic of the video. Never pick two versions of the same beat or line.
+- Spread them across the whole video (beginning, middle, and end).
+
+Only return fewer than {max_clips} if the video genuinely can't yield that many strong, non-overlapping \
+20 to 30 second clips - return as many as it truly supports rather than padding with weak or overlapping picks.
+
+List the clips strongest FIRST, weakest last. Use the pick_shorts tool to report your answer."""
+
+
 def _format_timestamp(seconds):
     m = int(seconds // 60)
     s = int(seconds % 60)
@@ -307,10 +346,30 @@ def write_headline(clip_text, candidate_title, reason, api_key, avoid=None):
     raise RuntimeError("Claude didn't return a headline. Try again.")
 
 
-def find_best_moments(words, api_key):
+def _trim_end_to_max(segments, i0, i1, max_seconds):
+    """Pull the clip's end back so it fits within `max_seconds`, landing on the
+    LATEST sentence-ending segment that still fits (keeps a clean finish). If no
+    complete-thought boundary fits inside the cap, keep the model's end rather
+    than cutting mid-sentence (a rare clip that runs a little long but reads
+    right beats one chopped off mid-thought). Used by Version B's 20-30s cap."""
+    best = None
+    for j in range(i0, i1 + 1):
+        if segments[j]["end"] - segments[i0]["start"] > max_seconds:
+            break
+        if _ends_sentence(segments[j]["text"]):
+            best = j
+    return best if best is not None else i1
+
+
+def find_best_moments(words, api_key, version="A"):
     """Returns (candidates, segments). Each candidate carries both segment
     indices (start_index/end_index, for the trim UI) and the seconds they map
-    to (start_seconds/end_seconds/thumbnail_seconds, for cutting)."""
+    to (start_seconds/end_seconds/thumbnail_seconds, for cutting).
+
+    `version` selects the editing style: "A" is the balanced 25-60s cut, "B" is
+    the punchy 20-30s cut (immediate hook, one dense idea). The length window is
+    enforced AFTER the model answers (see the floor/cap below), because snapping
+    to clean sentence boundaries can otherwise drift a clip outside the target."""
     client = anthropic.Anthropic(api_key=api_key)
 
     segments = segment.split_segments(words)
@@ -326,6 +385,16 @@ def find_best_moments(words, api_key):
     duration_seconds = segments[-1]["end"] if segments else 0
     max_clips = max(3, min(15, round(duration_seconds / 60)))
 
+    # Per-version length window. Enforced below after the model answers.
+    #   A: balanced, 25-60s target, floor 12, no hard cap (matches old behavior).
+    #   B: punchy, 20-30s target, floor 18, hard cap 30.
+    if version == "B":
+        system_prompt = _system_prompt_b(max_clips)
+        floor_seconds, cap_seconds = 18, 30
+    else:
+        system_prompt = _system_prompt(max_clips)
+        floor_seconds, cap_seconds = _MIN_CLIP_SECONDS, None
+
     transcript_text = "\n".join(
         f"[{i}] ({_format_timestamp(s['start'])}) {s['text']}" for i, s in enumerate(segments)
     )
@@ -333,7 +402,7 @@ def find_best_moments(words, api_key):
     response = client.messages.create(
         model=MODEL,
         max_tokens=6000,
-        system=_system_prompt(max_clips),
+        system=system_prompt,
         tools=[PICK_SHORTS_TOOL],
         tool_choice={"type": "tool", "name": "pick_shorts"},
         messages=[
@@ -349,6 +418,11 @@ def find_best_moments(words, api_key):
             candidates = []
             kept_ranges = []  # (i0, i1) of clips already kept, to guarantee distinctness
             for c in block.input["candidates"]:
+                # Defensive: very rarely the model hands back a candidate that
+                # isn't a proper object (or is missing its indices). Skip it
+                # rather than failing the whole analysis.
+                if not isinstance(c, dict) or "start_index" not in c or "end_index" not in c:
+                    continue
                 i0 = max(0, min(int(c["start_index"]), n - 1))
                 i1 = max(0, min(int(c["end_index"]), n - 1))
                 if i1 < i0:
@@ -360,9 +434,13 @@ def find_best_moments(words, api_key):
                 i1 = _snap_end(segments, i1, i0)
                 if i1 < i0:
                     i1 = i0
-                # Never emit a clip too short to be a usable Short.
-                if segments[i1]["end"] - segments[i0]["start"] < _MIN_CLIP_SECONDS:
-                    i1 = _extend_end_to_floor(segments, i0, i1, _MIN_CLIP_SECONDS)
+                # Enforce the version's length window. Extend a too-short clip up
+                # to the floor, then (Version B) pull a too-long clip back under
+                # the cap, landing on a clean sentence end either way.
+                if segments[i1]["end"] - segments[i0]["start"] < floor_seconds:
+                    i1 = _extend_end_to_floor(segments, i0, i1, floor_seconds)
+                if cap_seconds is not None and segments[i1]["end"] - segments[i0]["start"] > cap_seconds:
+                    i1 = _trim_end_to_max(segments, i0, i1, cap_seconds)
                 # Distinctness guard: candidates arrive best-first, so if this one
                 # shares any segment with a clip we've already kept, drop it - the
                 # user wants *distinct* shorts, not near-duplicates of one moment.

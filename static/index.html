@@ -151,6 +151,11 @@
   .cap-move-btns { display: flex; gap: 8px; }
   .cap-move-btns button { font-size: 13px; font-weight: 600; color: var(--navy); background: #f2f4f8; border: 1px solid #d8deea; border-radius: 8px; padding: 5px 12px; cursor: pointer; }
   .cap-move-btns button:hover { background: #e8ecf5; }
+  .version-field { margin-top: 12px; }
+  .version-field label { font-weight: 600; font-size: 13px; color: var(--navy); margin-bottom: 4px; display: block; }
+  .version-field select { font-size: 14px; padding: 8px 10px; border: 1px solid #d8deea; border-radius: 8px; width: 100%; max-width: 520px; background: white; color: var(--text); }
+  .version-field .hint { margin-top: 4px; }
+  .ver-tag { display: inline-block; font-size: 11px; font-weight: 700; color: white; background: var(--navy); border-radius: 6px; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }
   .adjust { margin-top: 12px; max-width: 260px; }
   .adjust label { font-weight: 600; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
   .adjust .slider-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
@@ -332,6 +337,14 @@
             <input type="text" id="url" placeholder="youtube.com/watch?v=...  or  share.descript.com/view/...">
             <button id="analyzeBtn" onclick="analyze()">Find the best moment</button>
           </div>
+          <div class="version-field">
+            <label for="versionSelect">Clip style</label>
+            <select id="versionSelect">
+              <option value="A" selected>Version A - balanced (25 to 60s, strong hook)</option>
+              <option value="B">Version B - punchy (20 to 30s, immediate hook, no fluff)</option>
+            </select>
+            <p class="hint">Version B starts on a bold claim and keeps only one tight, high-density idea. Same video, two different ways to cut it.</p>
+          </div>
           <div id="analyzeStatus"></div>
         </div>
 
@@ -407,6 +420,8 @@ async function analyze() {
   const btn = document.getElementById('analyzeBtn');
   if (!url) { statusEl.innerHTML = '<p class="error">Paste a video link first.</p>'; return; }
 
+  const version = document.getElementById('versionSelect').value || 'A';
+
   btn.disabled = true;
   statusEl.innerHTML = '<p class="status"><span class="spinner"></span>Downloading and reading the video - this can take a minute or two...</p>';
   document.getElementById('freshResults').innerHTML = '';
@@ -415,20 +430,22 @@ async function analyze() {
     const res = await fetch('/api/analyze', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({url})
+      body: JSON.stringify({url, version})
     });
     const data = await res.json();
     if (data.error) {
       statusEl.innerHTML = '<p class="error">' + data.error + '</p>';
       return;
     }
-    statusEl.innerHTML = '<p class="status">Found ' + data.candidates.length + ' candidate moments in "' + data.title + '".</p>';
+    const v = data.version || version;
+    const vlabel = v === 'B' ? ' using <b>Version B</b> (punchy 20 to 30s)' : ' using <b>Version A</b> (balanced)';
+    statusEl.innerHTML = '<p class="status">Found ' + data.candidates.length + ' candidate moments in "' + data.title + '"' + vlabel + '.</p>';
     document.getElementById('url').value = '';
 
     const container = document.getElementById('freshResults');
     data.candidates.forEach((c, i) => {
-      const domKey = `create-${data.video_id}-${i}`;
-      renderCandidateCard(domKey, data.video_id, c, data.segments, container, true, i + 1);
+      const domKey = `create-${data.video_id}-${v}-${i}`;
+      renderCandidateCard(domKey, data.video_id, c, data.segments, container, true, i + 1, v);
     });
   } catch (e) {
     statusEl.innerHTML = '<p class="error">Something went wrong: ' + e + '</p>';
@@ -659,17 +676,18 @@ function renderAnalysisEntry(entry, container) {
   container.appendChild(wrap);  // attach before populating so getElementById can find children below
 
   entry.candidates.forEach((c, i) => {
-    const domKey = `history-${entry.video_id}-${i}`;
-    renderCandidateCard(domKey, entry.video_id, c, entry.segments, wrap, true, i + 1);
+    const domKey = `history-${entry.video_id}-${entry.version || 'A'}-${i}`;
+    renderCandidateCard(domKey, entry.video_id, c, entry.segments, wrap, true, i + 1, entry.version);
   });
 }
 
-function renderCandidateCard(domKey, videoId, c, segments, container, eager, num) {
+function renderCandidateCard(domKey, videoId, c, segments, container, eager, num, version) {
   segments = segments || [];
+  version = version || 'A';
   // Fall back gracefully for older analyses saved before trim existed.
   const hasSegs = segments.length > 0 && c.start_index != null && c.end_index != null;
   state[domKey] = {
-    video_id: videoId,
+    video_id: videoId, version: version,
     candidate_title: c.title, reason: c.reason,
     start: c.start_seconds, end: c.end_seconds,
     thumbnail_seconds: c.thumbnail_seconds,
@@ -677,7 +695,11 @@ function renderCandidateCard(domKey, videoId, c, segments, container, eager, num
     startIdx: hasSegs ? c.start_index : null,
     endIdx: hasSegs ? c.end_index : null,
     auto: true, crop_x_pct: 0.5, caption_margin_v: 440,
-    title_text: '', title_on: false, headline_generated: false,
+    // Title is ON by default now (she keeps it most of the time). She unchecks
+    // to remove it. Headlines are auto-written for the top few clips eagerly;
+    // the rest fill in when she makes the short (see generate) - this avoids
+    // firing a burst of API calls for clips she may never use.
+    title_text: '', title_on: true, headline_generated: false,
   };
 
   const trimBlock = hasSegs ? `
@@ -706,7 +728,7 @@ function renderCandidateCard(domKey, videoId, c, segments, container, eager, num
   div.className = 'candidate';
   div.innerHTML = `
     <div class="cand-top">
-      <span class="cand-num">#${num}</span>
+      <span class="cand-num">#${num}</span>${version === 'B' ? '<span class="ver-tag">Version B</span>' : ''}
       <button type="button" class="cand-remove" title="Delete this suggestion" aria-label="Delete this suggestion" onclick="removeCandidate('${domKey}', this)">✕</button>
     </div>
     <div class="time" id="time-${domKey}">${formatTime(c.start_seconds)} - ${formatTime(c.end_seconds)}</div>
@@ -714,16 +736,16 @@ function renderCandidateCard(domKey, videoId, c, segments, container, eager, num
     <p></p>
     <div class="title-field">
       <label class="title-toggle" for="titleOn-${domKey}">
-        <input type="checkbox" id="titleOn-${domKey}" onchange="onTitleToggle('${domKey}')">
-        <span>Add a title across the top</span>
+        <input type="checkbox" id="titleOn-${domKey}" checked onchange="onTitleToggle('${domKey}')">
+        <span>Title across the top (on)</span>
       </label>
-      <div class="title-body" id="titleBody-${domKey}" style="display:none">
-        <input type="text" id="titleText-${domKey}" maxlength="80" placeholder="e.g. 3 signs you've outgrown your life" oninput="onTitleChange('${domKey}')">
+      <div class="title-body" id="titleBody-${domKey}" style="display:block">
+        <input type="text" id="titleText-${domKey}" maxlength="80" placeholder="A headline is written for you..." oninput="onTitleChange('${domKey}')">
         <div class="title-actions">
           <button type="button" class="title-rewrite" id="titleRewrite-${domKey}" onclick="writeHeadline('${domKey}', true)">↻ Suggest another</button>
           <span class="title-thinking" id="titleThinking-${domKey}" style="display:none">writing a headline...</span>
         </div>
-        <p class="hint">Claude writes a headline when you switch this on. Edit it, or write your own.</p>
+        <p class="hint">On by default. Claude writes the headline (or click Suggest another). Edit it, or uncheck to remove it.</p>
       </div>
     </div>
     <div class="preview-wrap"><img id="previewImg-${domKey}" alt="preview"></div>
@@ -750,7 +772,17 @@ function renderCandidateCard(domKey, videoId, c, segments, container, eager, num
   div.querySelector('p').textContent = c.reason;
   container.appendChild(div);
   if (hasSegs) updateTrimUI(domKey);
-  if (eager) updatePreview(domKey);
+  if (eager) {
+    // Auto-write the headline only for the top 3 clips, so their previews show
+    // the title right away without firing a headline call for every clip at
+    // once. Clips #4+ get their headline when she makes the short (see generate)
+    // or when she clicks into that card. writeHeadline refreshes the preview.
+    if (state[domKey].title_on && num <= 3) {
+      writeHeadline(domKey, false);
+    } else {
+      updatePreview(domKey);
+    }
+  }
 }
 
 // Remove a suggested clip she doesn't want. These are on-screen suggestions,
@@ -844,6 +876,12 @@ function renderGeneratedEntry(g, container) {
   // Show the exact title that goes to (or is on) YouTube: posted_title once
   // posted, otherwise the working title that will be posted as-is.
   body.querySelector('.short-title').textContent = g.posted_title || g.candidate_title || 'Short';
+  if (g.version === 'B') {
+    const vt = document.createElement('span');
+    vt.className = 'ver-tag';
+    vt.textContent = 'B';
+    body.querySelector('.short-title').appendChild(vt);
+  }
   body.querySelector('.short-range span').textContent = `${formatTime(g.start)} – ${formatTime(g.end)}`;
   body.querySelector('.short-date span').textContent =
     g.generated_at ? new Date(g.generated_at).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'}) : 'Unknown date';
@@ -1149,6 +1187,12 @@ async function generate(domKey) {
   let thumb = s.thumbnail_seconds;
   if (thumb == null || thumb < s.start || thumb > s.end) thumb = null;
   statusEl.innerHTML = '<p class="status"><span class="spinner"></span>Cutting, reframing to vertical, and adding captions...</p>';
+  // Title is on by default, but clips past the top 3 don't have a headline yet
+  // (we don't auto-write all of them up front). Write it now so the short still
+  // gets its title. Best-effort: if it fails, the short is made without a title.
+  if (s.title_on && !(s.title_text || '').trim()) {
+    await writeHeadline(domKey, false);
+  }
   try {
     const res = await fetch('/api/generate', {
       method: 'POST',
@@ -1156,7 +1200,7 @@ async function generate(domKey) {
       body: JSON.stringify({
         video_id: s.video_id, start: s.start, end: s.end,
         auto: s.auto, crop_x_pct: s.crop_x_pct, caption_margin_v: s.caption_margin_v,
-        candidate_title: s.candidate_title, reason: s.reason,
+        candidate_title: s.candidate_title, reason: s.reason, version: s.version || 'A',
         thumbnail_seconds: thumb, title_text: (s.title_on && s.title_text) ? s.title_text : ''
       })
     });

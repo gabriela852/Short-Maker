@@ -43,28 +43,34 @@ def _get_framing(video, start, end):
     return FRAMING_CACHE[key]
 
 
-def _analysis_path(video_id):
-    return os.path.join(ANALYSES_DIR, f"{video_id}.json")
+def _analysis_path(video_id, version="A"):
+    # Version A keeps the original bare filename (backward compatible with every
+    # analysis saved before versions existed); other versions get a suffix, so
+    # analyzing the same link under A and then B never overwrites the other's
+    # saved clips.
+    suffix = "" if version == "A" else f".{version}"
+    return os.path.join(ANALYSES_DIR, f"{video_id}{suffix}.json")
 
 
-def _save_analysis(video_id, title, duration, candidates, segments):
+def _save_analysis(video_id, title, duration, candidates, segments, version="A"):
     data = {
         "video_id": video_id,
+        "version": version,
         "title": title,
         "duration": duration,
         "candidates": candidates,
         "segments": segments,
         "analyzed_at": datetime.datetime.now().isoformat(),
     }
-    path = _analysis_path(video_id)
+    path = _analysis_path(video_id, version)
     tmp_path = path + f".{uuid.uuid4().hex[:8]}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
     os.replace(tmp_path, path)
 
 
-def _load_analysis(video_id):
-    path = _analysis_path(video_id)
+def _load_analysis(video_id, version="A"):
+    path = _analysis_path(video_id, version)
     if not os.path.isfile(path):
         return None
     try:
@@ -72,6 +78,22 @@ def _load_analysis(video_id):
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _any_analysis(video_id):
+    """Any saved analysis for this video, whatever version - used only to
+    recover the video's title after a restart (the title is the same for A and
+    B). Checks the A file first, then any versioned one."""
+    a = _load_analysis(video_id, "A")
+    if a:
+        return a
+    for path in sorted(glob.glob(os.path.join(ANALYSES_DIR, f"{video_id}.*.json"))):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+    return None
 
 
 def _get_video(video_id):
@@ -86,7 +108,7 @@ def _get_video(video_id):
     if video is None:
         return None
 
-    analysis = _load_analysis(video_id)
+    analysis = _any_analysis(video_id)
     video["title"] = analysis["title"] if analysis else video_id
     VIDEO_CACHE[video_id] = video
     return video
@@ -122,12 +144,15 @@ def analyze():
 
     data = request.get_json(force=True)
     url = (data.get("url") or "").strip()
+    version = (data.get("version") or "A").strip().upper()
+    if version not in ("A", "B"):
+        version = "A"
     if not url:
         return jsonify({"error": "Paste a video link first."}), 400
 
     try:
         video = download.fetch_source(url)
-        candidates, segments = rank.find_best_moments(video["words"], api_key)
+        candidates, segments = rank.find_best_moments(video["words"], api_key, version)
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -135,13 +160,14 @@ def analyze():
     VIDEO_CACHE[video["video_id"]] = video
 
     duration = video["words"][-1]["end"] if video["words"] else 0
-    _save_analysis(video["video_id"], video["title"], duration, candidates, segments)
+    _save_analysis(video["video_id"], video["title"], duration, candidates, segments, version)
 
     return jsonify(
         {
             "video_id": video["video_id"],
             "title": video["title"],
             "duration": duration,
+            "version": version,
             "candidates": candidates,
             "segments": segments,
         }
@@ -203,6 +229,9 @@ def generate():
     reason = data.get("reason", "")
     thumbnail_seconds = data.get("thumbnail_seconds")
     title_text = (data.get("title_text") or "").strip()
+    version = (data.get("version") or "A").strip().upper()
+    if version not in ("A", "B"):
+        version = "A"
 
     video = _get_video(video_id)
     if video is None:
@@ -246,7 +275,7 @@ def generate():
     _save_generated_sidecar(
         filename, video_id, video.get("title", video_id), candidate_title, reason,
         float(start), float(end), float(crop_x_pct), float(caption_margin_v), thumbnail_filename,
-        title_text,
+        title_text, version,
     )
     resp = {"filename": filename, "url": f"/api/file/{filename}"}
     if thumbnail_filename:
@@ -294,7 +323,7 @@ def preview():
     return jsonify({"url": f"/api/preview_file/{filename}", "auto_used": frame_info is not None})
 
 
-def _save_generated_sidecar(filename, video_id, source_title, candidate_title, reason, start, end, crop_x_pct, caption_margin_v, thumbnail_filename=None, title_text=""):
+def _save_generated_sidecar(filename, video_id, source_title, candidate_title, reason, start, end, crop_x_pct, caption_margin_v, thumbnail_filename=None, title_text="", version="A"):
     data = {
         "filename": filename,
         "video_id": video_id,
@@ -306,6 +335,7 @@ def _save_generated_sidecar(filename, video_id, source_title, candidate_title, r
         "crop_x_pct": crop_x_pct,
         "caption_margin_v": caption_margin_v,
         "title_text": title_text,
+        "version": version,
         "thumbnail_filename": thumbnail_filename,
         "generated_at": datetime.datetime.now().isoformat(),
     }
