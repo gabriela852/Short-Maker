@@ -116,7 +116,7 @@ def _ass_style(margin_v):
     )
 
 
-def _build_vf(srt_path, crop_x_pct=0.5, caption_margin_v=90):
+def _build_vf(srt_path, crop_x_pct=0.5, caption_margin_v=440):
     """Shared scale+crop+subtitles filter chain for both the full render and
     the single-frame preview. Scaling with force_original_aspect_ratio=increase
     guarantees the frame always covers the target 1080x1920, so the crop
@@ -249,7 +249,7 @@ def _sweep_old_previews():
             pass
 
 
-def make_short(video_path, words, start, end, output_name=None, framing=None, crop_x_pct=0.5, caption_margin_v=90, title_text=""):
+def make_short(video_path, words, start, end, output_name=None, framing=None, crop_x_pct=0.5, caption_margin_v=440, title_text=""):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(WORK_DIR, exist_ok=True)
 
@@ -289,7 +289,7 @@ def make_short(video_path, words, start, end, output_name=None, framing=None, cr
     return output_path
 
 
-def make_preview_frame(video_path, words, start, end, timestamp=None, framing=None, crop_x_pct=0.5, caption_margin_v=90, title_text=""):
+def make_preview_frame(video_path, words, start, end, timestamp=None, framing=None, crop_x_pct=0.5, caption_margin_v=440, title_text=""):
     """Extracts one JPEG frame with the same crop+caption filter chain used by
     make_short, so the user can see the result before committing to a full render."""
     os.makedirs(WORK_DIR, exist_ok=True)
@@ -362,7 +362,7 @@ def _best_face_time(video_path, t, lo, hi, window=0.4, samples=5):
 
 
 def make_thumbnail(video_path, words, start, end, thumb_time, framing=None,
-                   crop_x_pct=0.5, caption_margin_v=90, output_name=None, title_text=""):
+                   crop_x_pct=0.5, caption_margin_v=440, output_name=None, title_text=""):
     """Saves a ready-to-upload 1080x1920 thumbnail JPEG: the most
     attention-grabbing caption line of the clip, on a frame where the speaker's
     face looks good. Same crop/caption styling as the short itself."""

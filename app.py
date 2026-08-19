@@ -198,7 +198,7 @@ def generate():
     end = data.get("end")
     auto = data.get("auto", True)
     crop_x_pct = data.get("crop_x_pct", 0.5)
-    caption_margin_v = data.get("caption_margin_v", 90)
+    caption_margin_v = data.get("caption_margin_v", 440)
     candidate_title = data.get("candidate_title", "")
     reason = data.get("reason", "")
     thumbnail_seconds = data.get("thumbnail_seconds")
@@ -263,7 +263,7 @@ def preview():
     timestamp = data.get("timestamp")
     auto = data.get("auto", True)
     crop_x_pct = data.get("crop_x_pct", 0.5)
-    caption_margin_v = data.get("caption_margin_v", 90)
+    caption_margin_v = data.get("caption_margin_v", 440)
     title_text = (data.get("title_text") or "").strip()
 
     video = _get_video(video_id)

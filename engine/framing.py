@@ -10,7 +10,11 @@ TARGET_W = 1080
 TARGET_H = 1920
 SAMPLE_COUNT = 9
 DETECT_WIDTH = 640  # downscale for detection speed; coordinates are scaled back up
-DEFAULT_MARGIN_V = 90  # caption distance from the bottom (real target pixels)
+DEFAULT_MARGIN_V = 440  # caption distance UP from the bottom, in real target
+# pixels (~23% of the 1920 height). Kept well clear of the bottom of the frame
+# because phone apps (YouTube Shorts, TikTok, Reels) overlay the caption, handle,
+# and buttons across the bottom ~15-20%, which would hide a low caption. Still
+# below the face-centered speaker, so it doesn't cover the face.
 
 _cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 

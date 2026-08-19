@@ -671,7 +671,7 @@ function renderCandidateCard(domKey, videoId, c, segments, container, eager, num
     segments: segments,
     startIdx: hasSegs ? c.start_index : null,
     endIdx: hasSegs ? c.end_index : null,
-    auto: true, crop_x_pct: 0.5, caption_margin_v: 90,
+    auto: true, crop_x_pct: 0.5, caption_margin_v: 440,
     title_text: '', title_on: false, headline_generated: false,
   };
 
@@ -731,7 +731,7 @@ function renderCandidateCard(domKey, videoId, c, segments, container, eager, num
       <input type="range" id="cropX-${domKey}" min="0" max="100" value="50" oninput="onSliderChange('${domKey}')">
       <label>Caption height</label>
       <div class="slider-labels"><span>Lower</span><span>Higher</span></div>
-      <input type="range" id="capY-${domKey}" min="40" max="300" value="90" oninput="onSliderChange('${domKey}')">
+      <input type="range" id="capY-${domKey}" min="80" max="700" value="440" oninput="onSliderChange('${domKey}')">
       <p><a href="#" onclick="resetToAuto('${domKey}'); return false;">Use automatic positioning again</a></p>
     </details>
     <button onclick="generate('${domKey}')">Make this short</button>
@@ -795,7 +795,7 @@ function nudge(domKey, edge, delta) {
 function resetToAuto(domKey) {
   state[domKey].auto = true;
   document.getElementById('cropX-' + domKey).value = 50;
-  document.getElementById('capY-' + domKey).value = 90;
+  document.getElementById('capY-' + domKey).value = 440;
   updatePreview(domKey);
 }
 
