@@ -25,7 +25,7 @@ PREVIEW_MAX_AGE_SECONDS = 60
 # no libass rescaling guesswork.
 TITLE_FONT = "Arial"
 TITLE_FONTSIZE = 78          # a touch smaller than the captions so the bar stays tidy
-TITLE_BOX_COLOUR = "&H009A6E3F"  # the blue bar behind the title, ASS &H00BBGGRR (#3F6E9A)
+TITLE_BOX_COLOUR = "&H00A5A628"  # the teal bar behind the title, ASS &H00BBGGRR (#28A6A5, her Sea Horizon teal)
 TITLE_BOX_PAD = 14           # padding of the coloured box around the text (ASS Outline w/ BorderStyle=3)
 TITLE_MARGIN_LR = 70         # left/right text padding -> wraps within ~940px
 TITLE_MARGIN_V = 165         # distance down from the top edge (sits a bit below the very top)
