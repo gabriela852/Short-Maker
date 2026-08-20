@@ -391,9 +391,14 @@ def find_best_moments(words, api_key, version="A"):
     if version == "B":
         system_prompt = _system_prompt_b(max_clips)
         floor_seconds, cap_seconds = 18, 30
+        # B promises 20-30s. If a spot in the transcript can't be extended to a
+        # full ~16s+ complete thought, drop it rather than show a stubby clip
+        # under the punchy label.
+        drop_below = 16
     else:
         system_prompt = _system_prompt(max_clips)
         floor_seconds, cap_seconds = _MIN_CLIP_SECONDS, None
+        drop_below = None
 
     transcript_text = "\n".join(
         f"[{i}] ({_format_timestamp(s['start'])}) {s['text']}" for i, s in enumerate(segments)
@@ -441,6 +446,10 @@ def find_best_moments(words, api_key, version="A"):
                     i1 = _extend_end_to_floor(segments, i0, i1, floor_seconds)
                 if cap_seconds is not None and segments[i1]["end"] - segments[i0]["start"] > cap_seconds:
                     i1 = _trim_end_to_max(segments, i0, i1, cap_seconds)
+                # Version B only: drop a clip that still can't reach a usable
+                # length (the transcript had no full thought there to extend to).
+                if drop_below is not None and segments[i1]["end"] - segments[i0]["start"] < drop_below:
+                    continue
                 # Distinctness guard: candidates arrive best-first, so if this one
                 # shares any segment with a clip we've already kept, drop it - the
                 # user wants *distinct* shorts, not near-duplicates of one moment.

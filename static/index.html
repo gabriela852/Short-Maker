@@ -156,6 +156,9 @@
   .version-field select { font-size: 14px; padding: 8px 10px; border: 1px solid #d8deea; border-radius: 8px; width: 100%; max-width: 520px; background: white; color: var(--text); }
   .version-field .hint { margin-top: 4px; }
   .ver-tag { display: inline-block; font-size: 11px; font-weight: 700; color: white; background: var(--navy); border-radius: 6px; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }
+  .short-done-badge { font-size: 13px; font-weight: 700; color: #1f9d55; margin: 0 0 6px; }
+  .short-done-title { font-size: 15px; font-weight: 700; color: var(--navy); margin: 0 0 8px; line-height: 1.3; }
+  .candidate.candidate-done { background: #f7fbf8; }
   .adjust { margin-top: 12px; max-width: 260px; }
   .adjust label { font-weight: 600; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
   .adjust .slider-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
@@ -1209,15 +1212,29 @@ async function generate(domKey) {
       statusEl.innerHTML = '<p class="error">' + data.error + '</p>';
       return;
     }
-    statusEl.innerHTML = `
-      <video controls src="${data.url}"></video>
-      <div class="short-actions" style="max-width:300px;flex-direction:column;align-items:stretch;">
-        <button class="yt-btn" id="ytBtn-${domKey}">▶ Post to YouTube</button>
-        <a class="download" href="${data.url}" download="${data.filename}"><button class="secondary" style="width:100%">Download short</button></a>
-        <div class="yt-status" id="ytStatus-${domKey}" style="display:none"></div>
+    // Replace the whole suggestion card with the finished short IN PLACE, so she
+    // sees the final product once (on top) instead of the preview card plus a
+    // duplicate video below it. Falls back to the status area if the card can't
+    // be found for any reason.
+    const card = statusEl.closest('.candidate');
+    const target = card || statusEl;
+    target.innerHTML = `
+      <div class="short-done">
+        <p class="short-done-badge">✓ Your short is ready</p>
+        <h3 class="short-done-title"></h3>
+        <video controls src="${data.url}"></video>
+        <div class="short-actions" style="max-width:320px;flex-direction:column;align-items:stretch;">
+          <button class="yt-btn" id="ytBtn-${domKey}">▶ Post to YouTube</button>
+          <a class="download" href="${data.url}" download="${data.filename}"><button class="secondary" style="width:100%">Download short</button></a>
+          <div class="yt-status" id="ytStatus-${domKey}" style="display:none"></div>
+        </div>
+        <p class="hint">Also saved under the History tab.</p>
       </div>
-      <p class="hint">Also saved under the History tab.</p>
     `;
+    // Set the clip's title via textContent so a title with odd characters can't break the page.
+    const titleEl = target.querySelector('.short-done-title');
+    if (titleEl) titleEl.textContent = s.candidate_title || 'Short';
+    if (card) card.classList.add('candidate-done');
     const ytBtn = document.getElementById('ytBtn-' + domKey);
     const ytStatus = document.getElementById('ytStatus-' + domKey);
     ytBtn.onclick = () => { ytStatus.style.display = 'block'; promptPost(data.filename, ytStatus, ytBtn); };
