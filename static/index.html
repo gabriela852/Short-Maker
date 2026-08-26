@@ -125,6 +125,7 @@
   .error { color: #b00020; font-size: 14px; margin-top: 10px; }
   .empty-hint { color: var(--muted); font-size: 14px; }
   .preview-wrap { max-width: 220px; margin-top: 10px; }
+  .preview-msg { display: none; font-size: 12px; color: #b23b3b; background: #fdedeb; border: 1px solid #f3c9c4; border-radius: 8px; padding: 8px 10px; margin-top: 8px; line-height: 1.4; }
   .preview-wrap img {
     width: 100%;
     border-radius: 10px;
@@ -751,7 +752,7 @@ function renderCandidateCard(domKey, videoId, c, segments, container, eager, num
         <p class="hint">On by default. Claude writes the headline (or click Suggest another). Edit it, or uncheck to remove it.</p>
       </div>
     </div>
-    <div class="preview-wrap"><img id="previewImg-${domKey}" alt="preview"></div>
+    <div class="preview-wrap"><img id="previewImg-${domKey}" alt="preview"><div class="preview-msg" id="previewMsg-${domKey}"></div></div>
     <div class="cap-move">
       <span class="cap-move-label">Captions covering your face? Move them:</span>
       <div class="cap-move-btns">
@@ -1122,18 +1123,24 @@ async function writeHeadline(domKey, force) {
       input.value = data.headline;
       s.title_text = data.headline;
       s.headline_generated = true;
-      updatePreview(domKey);
+      if (think) think.style.display = 'none';
     } else if (data.error && think) {
+      // Headline failed, but the preview must still render. Show the error
+      // briefly and fall through to updatePreview below so she at least sees
+      // the frame (she can type her own headline).
       think.textContent = data.error;
       setTimeout(() => { think.style.display = 'none'; think.textContent = 'writing a headline...'; }, 4000);
-      if (btn) btn.disabled = false;
-      return;
+    } else if (think) {
+      think.style.display = 'none';
     }
   } catch (e) {
     // Network hiccup: leave the box as-is, she can still write her own.
+    if (think) think.style.display = 'none';
   }
-  if (think) think.style.display = 'none';
   if (btn) btn.disabled = false;
+  // Always refresh the preview, even if the headline call failed, so the
+  // preview image never stays blank just because a headline couldn't be written.
+  updatePreview(domKey);
 }
 
 function onSliderChange(domKey) {
@@ -1158,8 +1165,10 @@ function moveCaption(domKey, delta) {
 
 async function updatePreview(domKey) {
   const img = document.getElementById('previewImg-' + domKey);
+  const msg = document.getElementById('previewMsg-' + domKey);
   const s = state[domKey];
   if (!img || !s) return;
+  const showMsg = (t) => { if (msg) { msg.textContent = t || ''; msg.style.display = t ? 'block' : 'none'; } };
   img.style.opacity = '0.5';
   try {
     const res = await fetch('/api/preview', {
@@ -1172,14 +1181,20 @@ async function updatePreview(domKey) {
       })
     });
     const data = await res.json();
+    img.style.opacity = '1';
     if (data.url) {
       img.src = data.url + '?t=' + Date.now();
-      img.style.opacity = '1';
-    } else if (data.error) {
-      img.style.opacity = '1';
+      showMsg('');
+    } else {
+      // The server answered but couldn't make the frame (e.g. the video needs
+      // re-analyzing). Tell her instead of leaving a blank box.
+      showMsg(data.error || "Couldn't build the preview. Try clicking Analyze on this video again.");
     }
   } catch (e) {
+    // No answer at all: the app almost always stopped. A blank box looks like a
+    // broken feature, so name the likely cause.
     img.style.opacity = '1';
+    showMsg("Couldn't reach the app. Make sure the black Shorts Maker window is still open, then reload this page.");
   }
 }
 
