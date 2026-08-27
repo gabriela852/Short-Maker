@@ -10,7 +10,7 @@ the UI - one source of truth for where a clip can begin and end."""
 import os
 import anthropic
 
-from engine import segment
+from engine import creator_profile, segment
 
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
 
@@ -82,6 +82,13 @@ its text must end with a period, question mark, or exclamation. The last line mu
 segment that trails off or starts a brand-new thought that the clip won't finish.
 - Is roughly 25 to 60 seconds long (prefer 30-45s) - add up the segment durations to judge length.
 
+{creator_profile.WHAT_WORKS}
+
+{creator_profile.WHAT_FLOPS}
+
+When two moments are both cutable as clean clips, ALWAYS prefer the one that matches the audience data above. A \
+raw, vulnerable, first-person confession beats a polished piece of general advice every time here.
+
 Report each clip as a range of segment indices: start_index (the first segment to include) through end_index (the last \
 segment to include, inclusive). Choose start_index so the clip opens on a full sentence, and end_index so it closes on \
 a finished thought.
@@ -125,6 +132,13 @@ this window. Aim for around 25 seconds. This is a hard requirement, not a sugges
 - CLEAN SENTENCE BOUNDARIES: start_index must be the FIRST word of a sentence (never mid-thought, never a \
 filler connector like "And", "But", "So", "Because"), and end_index must FINISH the thought (its text ends \
 with a period, question mark, or exclamation).
+
+{creator_profile.WHAT_WORKS}
+
+{creator_profile.WHAT_FLOPS}
+
+When two moments are both cutable as clean clips, ALWAYS prefer the one that matches the audience data above. A \
+raw, vulnerable, first-person confession beats a polished piece of general advice every time here.
 
 Report each clip as a range of segment indices: start_index through end_index (inclusive).
 
@@ -288,7 +302,7 @@ WRITE_HEADLINE_TOOL = {
     },
 }
 
-_HEADLINE_SYSTEM = """You write the big TITLE BANNER that sits across the very top of a vertical short \
+_HEADLINE_SYSTEM = f"""You write the big TITLE BANNER that sits across the very top of a vertical short \
 video (Reels / TikTok / YouTube Shorts), above the speaker's head. This is NOT the YouTube title and NOT the \
 captions. It is the on-screen hook a viewer reads in the first second while deciding whether to keep scrolling.
 
@@ -300,6 +314,8 @@ Rules for the headline:
 surrounding quotation marks.
 - NEVER use an em dash or en dash. Use a comma, a period, or a plain hyphen instead.
 - Do not just repeat the spoken words verbatim. Capture the hook behind them.
+
+{creator_profile.WINNING_HOOK_PATTERNS}
 
 Return exactly one headline using the write_headline tool."""
 

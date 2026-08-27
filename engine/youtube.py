@@ -29,6 +29,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
+from engine import creator_profile
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # The credentials file she downloads from Google Cloud goes in the project
@@ -169,7 +171,7 @@ WRITE_METADATA_TOOL = {
     },
 }
 
-METADATA_SYSTEM = """You ARE the creator of this YouTube Short, writing the title and description for your \
+METADATA_SYSTEM = f"""You ARE the creator of this YouTube Short, writing the title and description for your \
 OWN clip, in your OWN voice. The person speaking in the clip is you - so write as yourself, in the first \
 person.
 
@@ -180,6 +182,8 @@ Write:
 - a tight, curiosity-driving title (the hook that makes someone stop scrolling and tap), and
 - a short description of one or two sentences, in the FIRST PERSON (I / me / my), speaking directly to your \
 viewers - warm, real, and human, the way you'd caption your own Short.
+
+{creator_profile.WINNING_HOOK_PATTERNS}
 
 Hard rules:
 - NEVER describe the speaker in the third person ("She...", "The creator...", "In this clip she..."). You are \
