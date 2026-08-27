@@ -140,12 +140,13 @@ List the clips strongest FIRST, weakest last. Use the pick_shorts tool to report
 
 
 def _system_prompt_c(max_clips):
-    """Version C: same clean, balanced 25-60s cut as Version A, but the moment
-    SELECTION is driven by this creator's real audience-performance data (see
-    engine/creator_profile.py). Where A hunts for the generically strongest
-    moment, C hunts for the moments THIS audience has actually rewarded. Length
-    handling matches A (floor 12, no hard cap)."""
-    return f"""You are an expert short-form video editor who turns long-form YouTube videos into 30-60 second \
+    """Version C: moment SELECTION and LENGTH are both driven by this creator's
+    real audience-performance data (see engine/creator_profile.py). Where A hunts
+    for the generically strongest moment, C hunts for the moments THIS audience
+    has actually rewarded, and targets 20-45s (her data: 20+s watched earns
+    engagement, over ~45s underperforms) - enforced in find_best_moments as
+    floor 18, cap 45."""
+    return f"""You are an expert short-form video editor who turns long-form YouTube videos into 20 to 45 second \
 Shorts, and you have this specific creator's real performance data to guide you.
 
 You are given a transcript that has already been split into numbered segments, one per line, like:
@@ -168,7 +169,9 @@ sentence, never mid-thought, and must NOT begin with a filler word such as "And"
 - Is self-contained: a viewer who never saw the full video can follow it without missing context.
 - Has a clear payoff, punchline, emotional peak, or "aha" moment. The end_index segment must FINISH that \
 thought - its text must end with a period, question mark, or exclamation.
-- Is roughly 25 to 60 seconds long (prefer 30-45s) - add up the segment durations to judge length.
+- LENGTH 20 TO 45 SECONDS, ideally around 25 to 40. This is tuned to her performance data: shorts her \
+audience actually watches for 20+ seconds get more engagement, so a clip needs enough substance to earn that, \
+but clips over about 45 seconds underperform, so never go past 45. Add up the segment durations to judge length.
 
 When two moments are both clean, cutable clips, prefer the one that better matches the audience data above: a \
 raw, vulnerable, first-person moment with real personal stakes beats an abstract, impersonal one.
@@ -458,11 +461,13 @@ def find_best_moments(words, api_key, version="A"):
         # under the punchy label.
         drop_below = 16
     elif version == "C":
-        # C is the balanced 25-60s cut (same length handling as A); its
-        # difference from A is WHICH moments it picks, driven by the creator's
-        # performance data in the prompt above.
+        # C picks moments using the creator's performance data (prompt above),
+        # and its LENGTH is tuned to that data too: her shorts need 20+ seconds
+        # of watchable substance to earn engagement, and clips over ~45s
+        # underperform. So 20-45s, enforced after the model answers, landing on
+        # clean sentence ends. Floor 18 gives a little slack under the 20 target.
         system_prompt = _system_prompt_c(max_clips)
-        floor_seconds, cap_seconds = _MIN_CLIP_SECONDS, None
+        floor_seconds, cap_seconds = 18, 45
         drop_below = None
     else:
         system_prompt = _system_prompt(max_clips)
