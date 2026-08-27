@@ -82,13 +82,6 @@ its text must end with a period, question mark, or exclamation. The last line mu
 segment that trails off or starts a brand-new thought that the clip won't finish.
 - Is roughly 25 to 60 seconds long (prefer 30-45s) - add up the segment durations to judge length.
 
-{creator_profile.WHAT_WORKS}
-
-{creator_profile.WHAT_FLOPS}
-
-When two moments are both cutable as clean clips, ALWAYS prefer the one that matches the audience data above. A \
-raw, vulnerable, first-person confession beats a polished piece of general advice every time here.
-
 Report each clip as a range of segment indices: start_index (the first segment to include) through end_index (the last \
 segment to include, inclusive). Choose start_index so the clip opens on a full sentence, and end_index so it closes on \
 a finished thought.
@@ -133,13 +126,6 @@ this window. Aim for around 25 seconds. This is a hard requirement, not a sugges
 filler connector like "And", "But", "So", "Because"), and end_index must FINISH the thought (its text ends \
 with a period, question mark, or exclamation).
 
-{creator_profile.WHAT_WORKS}
-
-{creator_profile.WHAT_FLOPS}
-
-When two moments are both cutable as clean clips, ALWAYS prefer the one that matches the audience data above. A \
-raw, vulnerable, first-person confession beats a polished piece of general advice every time here.
-
 Report each clip as a range of segment indices: start_index through end_index (inclusive).
 
 Return {max_clips} clips whenever the video can genuinely support that many, each DISTINCT:
@@ -151,6 +137,57 @@ Only return fewer than {max_clips} if the video genuinely can't yield that many 
 20 to 30 second clips - return as many as it truly supports rather than padding with weak or overlapping picks.
 
 List the clips strongest FIRST, weakest last. Use the pick_shorts tool to report your answer."""
+
+
+def _system_prompt_c(max_clips):
+    """Version C: same clean, balanced 25-60s cut as Version A, but the moment
+    SELECTION is driven by this creator's real audience-performance data (see
+    engine/creator_profile.py). Where A hunts for the generically strongest
+    moment, C hunts for the moments THIS audience has actually rewarded. Length
+    handling matches A (floor 12, no hard cap)."""
+    return f"""You are an expert short-form video editor who turns long-form YouTube videos into 30-60 second \
+Shorts, and you have this specific creator's real performance data to guide you.
+
+You are given a transcript that has already been split into numbered segments, one per line, like:
+[0] (00:00) Hey, how's it going?
+[1] (00:03) I just won a hackathon and I'm not a software engineer.
+
+Find the {max_clips} best possible standalone clips. Above all else, choose the moments this creator's own \
+audience rewards, using the data below.
+
+{creator_profile.WHAT_WORKS}
+
+{creator_profile.WHAT_FLOPS}
+
+Beyond matching that audience data, every clip must still be a clean, watchable Short:
+- OPENS ON A SCROLL-STOPPING MOMENT that lands in the very first second - the hook that decides whether a \
+viewer keeps watching. Never open on setup, context, or slow build-up.
+- STARTS AT THE BEGINNING OF A COMPLETE SENTENCE. The start_index segment must be the first word of a \
+sentence, never mid-thought, and must NOT begin with a filler word such as "And", "But", "So", "Or", \
+"Because", "Plus", or "Also".
+- Is self-contained: a viewer who never saw the full video can follow it without missing context.
+- Has a clear payoff, punchline, emotional peak, or "aha" moment. The end_index segment must FINISH that \
+thought - its text must end with a period, question mark, or exclamation.
+- Is roughly 25 to 60 seconds long (prefer 30-45s) - add up the segment durations to judge length.
+
+When two moments are both clean, cutable clips, prefer the one that better matches the audience data above: a \
+raw, vulnerable, first-person moment with real personal stakes beats an abstract, impersonal one.
+
+Report each clip as a range of segment indices: start_index (the first segment to include) through end_index \
+(the last segment to include, inclusive).
+
+Return {max_clips} clips whenever the video can genuinely support that many. They MUST be distinct:
+- Their segment ranges must NOT overlap - no clip may share a segment with another clip.
+- Each must come from a different part or topic of the video. Never pick two variations of the same beat, the \
+same story, or the same line said twice.
+- Spread them across the whole video (beginning, middle, and end), not clustered in one stretch.
+
+Only return fewer than {max_clips} if the video is genuinely too short or too repetitive to yield {max_clips} strong, \
+non-overlapping clips - in that case return as many genuinely distinct ones as it truly supports, rather than \
+padding with weak or overlapping picks.
+
+List the clips in order of quality, your single strongest clip FIRST and weakest last. Use the pick_shorts \
+tool to report your answer."""
 
 
 def _format_timestamp(seconds):
@@ -302,7 +339,7 @@ WRITE_HEADLINE_TOOL = {
     },
 }
 
-_HEADLINE_SYSTEM = f"""You write the big TITLE BANNER that sits across the very top of a vertical short \
+_HEADLINE_SYSTEM = """You write the big TITLE BANNER that sits across the very top of a vertical short \
 video (Reels / TikTok / YouTube Shorts), above the speaker's head. This is NOT the YouTube title and NOT the \
 captions. It is the on-screen hook a viewer reads in the first second while deciding whether to keep scrolling.
 
@@ -315,9 +352,14 @@ surrounding quotation marks.
 - NEVER use an em dash or en dash. Use a comma, a period, or a plain hyphen instead.
 - Do not just repeat the spoken words verbatim. Capture the hook behind them.
 
-{creator_profile.WINNING_HOOK_PATTERNS}
-
 Return exactly one headline using the write_headline tool."""
+
+# Version C only: the same banner rules plus the creator's proven hook patterns.
+# Kept separate so Versions A and B write headlines exactly as they always have.
+_HEADLINE_SYSTEM_C = _HEADLINE_SYSTEM.replace(
+    "\n\nReturn exactly one headline",
+    f"\n\n{creator_profile.WINNING_HOOK_PATTERNS}\n\nReturn exactly one headline",
+)
 
 
 def _clean_headline(text):
@@ -331,11 +373,15 @@ def _clean_headline(text):
     return h.strip(" ,").strip()[:80]
 
 
-def write_headline(clip_text, candidate_title, reason, api_key, avoid=None):
+def write_headline(clip_text, candidate_title, reason, api_key, avoid=None, version="A"):
     """Writes one short on-screen banner headline for a single clip. `avoid` is
     the current headline the user wants replaced (the Suggest another button), so
-    the model is told to take a fresh angle instead of repeating it."""
+    the model is told to take a fresh angle instead of repeating it.
+
+    `version` "C" adds the creator's proven hook patterns to the brief; "A"/"B"
+    write headlines exactly as before (unchanged)."""
     client = anthropic.Anthropic(api_key=api_key)
+    system = _HEADLINE_SYSTEM_C if (version or "A").upper() == "C" else _HEADLINE_SYSTEM
 
     user = (
         f'The clip\'s spoken words:\n"{clip_text}"\n\n'
@@ -348,7 +394,7 @@ def write_headline(clip_text, candidate_title, reason, api_key, avoid=None):
     response = client.messages.create(
         model=MODEL,
         max_tokens=200,
-        system=_HEADLINE_SYSTEM,
+        system=system,
         tools=[WRITE_HEADLINE_TOOL],
         tool_choice={"type": "tool", "name": "write_headline"},
         messages=[{"role": "user", "content": user}],
@@ -411,6 +457,13 @@ def find_best_moments(words, api_key, version="A"):
         # full ~16s+ complete thought, drop it rather than show a stubby clip
         # under the punchy label.
         drop_below = 16
+    elif version == "C":
+        # C is the balanced 25-60s cut (same length handling as A); its
+        # difference from A is WHICH moments it picks, driven by the creator's
+        # performance data in the prompt above.
+        system_prompt = _system_prompt_c(max_clips)
+        floor_seconds, cap_seconds = _MIN_CLIP_SECONDS, None
+        drop_below = None
     else:
         system_prompt = _system_prompt(max_clips)
         floor_seconds, cap_seconds = _MIN_CLIP_SECONDS, None

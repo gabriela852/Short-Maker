@@ -145,7 +145,7 @@ def analyze():
     data = request.get_json(force=True)
     url = (data.get("url") or "").strip()
     version = (data.get("version") or "A").strip().upper()
-    if version not in ("A", "B"):
+    if version not in ("A", "B", "C"):
         version = "A"
     if not url:
         return jsonify({"error": "Paste a video link first."}), 400
@@ -197,6 +197,9 @@ def headline():
     candidate_title = data.get("candidate_title", "")
     reason = data.get("reason", "")
     avoid = (data.get("avoid") or "").strip()
+    version = (data.get("version") or "A").strip().upper()
+    if version not in ("A", "B", "C"):
+        version = "A"
 
     video = _get_video(video_id)
     if video is None:
@@ -207,7 +210,7 @@ def headline():
     clip_text = _clip_transcript(video["words"], float(start), float(end))
     try:
         headline_text = rank.write_headline(
-            clip_text, candidate_title, reason, api_key, avoid=avoid or None
+            clip_text, candidate_title, reason, api_key, avoid=avoid or None, version=version
         )
     except Exception as e:
         traceback.print_exc()
@@ -230,7 +233,7 @@ def generate():
     thumbnail_seconds = data.get("thumbnail_seconds")
     title_text = (data.get("title_text") or "").strip()
     version = (data.get("version") or "A").strip().upper()
-    if version not in ("A", "B"):
+    if version not in ("A", "B", "C"):
         version = "A"
 
     video = _get_video(video_id)

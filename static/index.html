@@ -346,8 +346,9 @@
             <select id="versionSelect">
               <option value="A" selected>Version A - balanced (25 to 60s, strong hook)</option>
               <option value="B">Version B - punchy (20 to 30s, immediate hook, no fluff)</option>
+              <option value="C">Version C - your data (25 to 60s, picks what your audience rewards)</option>
             </select>
-            <p class="hint">Version B starts on a bold claim and keeps only one tight, high-density idea. Same video, two different ways to cut it.</p>
+            <p class="hint">Version B starts on a bold claim and keeps only one tight, high-density idea. Version C cuts like A but picks the moments your own YouTube stats show your audience rewards (vulnerable, personal, pain-point). Same video, three ways to cut it.</p>
           </div>
           <div id="analyzeStatus"></div>
         </div>
@@ -442,7 +443,9 @@ async function analyze() {
       return;
     }
     const v = data.version || version;
-    const vlabel = v === 'B' ? ' using <b>Version B</b> (punchy 20 to 30s)' : ' using <b>Version A</b> (balanced)';
+    const vlabel = v === 'B' ? ' using <b>Version B</b> (punchy 20 to 30s)'
+      : v === 'C' ? ' using <b>Version C</b> (your data)'
+      : ' using <b>Version A</b> (balanced)';
     statusEl.innerHTML = '<p class="status">Found ' + data.candidates.length + ' candidate moments in "' + data.title + '"' + vlabel + '.</p>';
     document.getElementById('url').value = '';
 
@@ -732,7 +735,7 @@ function renderCandidateCard(domKey, videoId, c, segments, container, eager, num
   div.className = 'candidate';
   div.innerHTML = `
     <div class="cand-top">
-      <span class="cand-num">#${num}</span>${version === 'B' ? '<span class="ver-tag">Version B</span>' : ''}
+      <span class="cand-num">#${num}</span>${version === 'B' ? '<span class="ver-tag">Version B</span>' : version === 'C' ? '<span class="ver-tag">Version C</span>' : ''}
       <button type="button" class="cand-remove" title="Delete this suggestion" aria-label="Delete this suggestion" onclick="removeCandidate('${domKey}', this)">✕</button>
     </div>
     <div class="time" id="time-${domKey}">${formatTime(c.start_seconds)} - ${formatTime(c.end_seconds)}</div>
@@ -880,10 +883,12 @@ function renderGeneratedEntry(g, container) {
   // Show the exact title that goes to (or is on) YouTube: posted_title once
   // posted, otherwise the working title that will be posted as-is.
   body.querySelector('.short-title').textContent = g.posted_title || g.candidate_title || 'Short';
-  if (g.version === 'B') {
+  // Tag every short with its version (A, B, or C) so a month later she can tell
+  // at a glance which cut style made each one and compare their stats over time.
+  {
     const vt = document.createElement('span');
     vt.className = 'ver-tag';
-    vt.textContent = 'B';
+    vt.textContent = g.version || 'A';
     body.querySelector('.short-title').appendChild(vt);
   }
   body.querySelector('.short-range span').textContent = `${formatTime(g.start)} – ${formatTime(g.end)}`;
@@ -1115,6 +1120,7 @@ async function writeHeadline(domKey, force) {
       body: JSON.stringify({
         video_id: s.video_id, start: s.start, end: s.end,
         candidate_title: s.candidate_title, reason: s.reason,
+        version: s.version || 'A',
         avoid: force ? (input.value || '') : ''
       })
     });
