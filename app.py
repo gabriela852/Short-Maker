@@ -152,7 +152,22 @@ def analyze():
 
     try:
         video = download.fetch_source(url)
-        candidates, segments = rank.find_best_moments(video["words"], api_key, version)
+        # If she already analyzed this exact video in this style before, reuse the
+        # clips we saved then instead of asking Claude for a fresh (and possibly
+        # different) set. That way going back to a video keeps the same moments,
+        # comes back instantly, and costs nothing. Brand-new videos analyze normally.
+        cached = _load_analysis(video["video_id"], version)
+        cached_usable = (
+            cached
+            and cached.get("candidates")
+            and cached.get("segments")
+            and cached["candidates"][0].get("start_index") is not None
+        )
+        if cached_usable:
+            candidates = cached["candidates"]
+            segments = cached["segments"]
+        else:
+            candidates, segments = rank.find_best_moments(video["words"], api_key, version)
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500

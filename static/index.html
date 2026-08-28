@@ -1233,12 +1233,12 @@ async function generate(domKey) {
       statusEl.innerHTML = '<p class="error">' + data.error + '</p>';
       return;
     }
-    // Replace the whole suggestion card with the finished short IN PLACE, so she
-    // sees the final product once (on top) instead of the preview card plus a
-    // duplicate video below it. Falls back to the status area if the card can't
-    // be found for any reason.
+    // Show the finished short in the status area BELOW the clip, and leave the
+    // trim dials ("End sooner" etc.) and the "Make this short" button in place
+    // above it. That way she can go back, cut the ending earlier, and make it
+    // again without starting over - the way it worked before Aug 2026.
     const card = statusEl.closest('.candidate');
-    const target = card || statusEl;
+    const target = statusEl;
     target.innerHTML = `
       <div class="short-done">
         <p class="short-done-badge">✓ Your short is ready</p>
@@ -1249,7 +1249,7 @@ async function generate(domKey) {
           <a class="download" href="${data.url}" download="${data.filename}"><button class="secondary" style="width:100%">Download short</button></a>
           <div class="yt-status" id="ytStatus-${domKey}" style="display:none"></div>
         </div>
-        <p class="hint">Also saved under the History tab.</p>
+        <p class="hint">Also saved under the History tab. Want it shorter or longer? Use the trim buttons above (End sooner / End later), then click "Make this short" again.</p>
       </div>
     `;
     // Set the clip's title via textContent so a title with odd characters can't break the page.
@@ -1259,6 +1259,9 @@ async function generate(domKey) {
     const ytBtn = document.getElementById('ytBtn-' + domKey);
     const ytStatus = document.getElementById('ytStatus-' + domKey);
     ytBtn.onclick = () => { ytStatus.style.display = 'block'; promptPost(data.filename, ytStatus, ytBtn); };
+    // The clip card is tall, so the finished short lands below the fold. Bring it
+    // into view so she sees the result right after clicking, not an empty screen.
+    target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (e) {
     statusEl.innerHTML = '<p class="error">Something went wrong: ' + e + '</p>';
   }
