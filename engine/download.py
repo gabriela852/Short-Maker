@@ -12,9 +12,27 @@ import urllib.request
 
 import yt_dlp
 
-from .ffmpeg_util import FFMPEG, SUBPROCESS_FLAGS
+from .ffmpeg_util import FFMPEG, FFPROBE, SUBPROCESS_FLAGS
 
 DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "downloads")
+
+
+def _is_playable(path):
+    """True only if ffprobe can read a real duration out of the file. Catches
+    partial/truncated downloads - a file that's non-empty but unusable (e.g. a
+    300MB video whose 'moov atom' index never finished writing). We use this
+    instead of a bare size>0 check so a broken leftover isn't reused forever."""
+    if not (os.path.isfile(path) and os.path.getsize(path) > 0):
+        return False
+    try:
+        result = subprocess.run(
+            [FFPROBE, "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, creationflags=SUBPROCESS_FLAGS,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and result.stdout.strip() not in ("", "N/A")
 
 _DESCRIPT_SLUG_RE = re.compile(r"descript\.com/(?:view|embed)/([A-Za-z0-9_-]+)")
 
@@ -261,34 +279,61 @@ def fetch_descript_video(url, progress_hook=None):
     video_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
     original_url = _media_url(media.get("original"))
     stream_url = _media_url(media.get("stream"))
-    already_downloaded = os.path.isfile(video_path) and os.path.getsize(video_path) > 0
-    if already_downloaded:
-        pass  # reuse the existing download (these files are large) - mirrors yt-dlp's skip-if-present
-    elif original_url:
-        req = urllib.request.Request(original_url, headers={"User-Agent": "Mozilla/5.0"})
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp, open(video_path, "wb") as out:
-                shutil.copyfileobj(resp, out)
-        except (urllib.error.HTTPError, urllib.error.URLError):
-            raise RuntimeError(
-                "This Descript link's video has expired. Reopen the share page in Descript "
-                "to refresh it, then paste the link again."
-            )
-    elif stream_url:
-        result = subprocess.run(
-            [FFMPEG, "-y", "-i", stream_url, "-c", "copy", video_path],
-            capture_output=True, text=True, creationflags=SUBPROCESS_FLAGS,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Couldn't download the Descript video:\n{result.stderr[-1500:]}")
-    else:
-        raise RuntimeError(
-            "This Descript link doesn't expose a downloadable video. Make sure the share page "
-            "shows the video and is set to public."
-        )
 
-    if not os.path.isfile(video_path) or os.path.getsize(video_path) == 0:
-        raise RuntimeError("The Descript video download finished but produced an empty file.")
+    if _is_playable(video_path):
+        pass  # reuse the existing, verified download (these files are large)
+    else:
+        # Download to a temporary ".part" file and only move it into place once
+        # it's complete and readable. This way an interrupted download never
+        # leaves a broken file sitting at the final path where it would be
+        # reused forever (a non-empty-but-truncated file passes a size check but
+        # not _is_playable). Any leftover ".part" is cleaned up either way.
+        part_path = video_path + ".part"
+        if os.path.exists(part_path):
+            try:
+                os.remove(part_path)
+            except OSError:
+                pass
+        try:
+            if original_url:
+                req = urllib.request.Request(original_url, headers={"User-Agent": "Mozilla/5.0"})
+                try:
+                    with urllib.request.urlopen(req, timeout=120) as resp, open(part_path, "wb") as out:
+                        shutil.copyfileobj(resp, out)
+                except (urllib.error.HTTPError, urllib.error.URLError):
+                    raise RuntimeError(
+                        "This Descript link's video has expired. Reopen the share page in Descript "
+                        "to refresh it, then paste the link again."
+                    )
+            elif stream_url:
+                # -f mp4 because the ".part" extension hides the container from ffmpeg.
+                result = subprocess.run(
+                    [FFMPEG, "-y", "-i", stream_url, "-c", "copy", "-f", "mp4", part_path],
+                    capture_output=True, text=True, creationflags=SUBPROCESS_FLAGS,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"Couldn't download the Descript video:\n{result.stderr[-1500:]}")
+            else:
+                raise RuntimeError(
+                    "This Descript link doesn't expose a downloadable video. Make sure the share page "
+                    "shows the video and is set to public."
+                )
+
+            if not _is_playable(part_path):
+                raise RuntimeError(
+                    "The Descript video download didn't complete - the file came through damaged "
+                    "(usually a dropped connection). Please try again in a moment."
+                )
+            os.replace(part_path, video_path)
+        finally:
+            if os.path.exists(part_path):
+                try:
+                    os.remove(part_path)
+                except OSError:
+                    pass
+
+    if not _is_playable(video_path):
+        raise RuntimeError("The Descript video download finished but the file isn't readable.")
 
     with open(os.path.join(DOWNLOAD_DIR, f"{video_id}.words.json"), "w", encoding="utf-8") as f:
         json.dump(words, f)
